@@ -1,0 +1,52 @@
+[project]
+name = "starburst-agent"
+version = "0.1.0"
+description = "MCP server exposing Starburst/Trino config validation and query analysis as deterministic tools."
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "mcp>=1.2",
+    "pyyaml>=6.0.3",
+    "types-pyyaml>=6.0.12.20260724",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["core", "adapters", "mcp_server"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "PT", "RET", "SIM", "TID"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"langgraph".msg = "core/ must stay framework-free; see CLAUDE.md"
+"langchain".msg = "core/ must stay framework-free; see CLAUDE.md"
+
+[[tool.mypy.overrides]]
+module = ["boto3.*", "botocore.*"]
+ignore_missing_imports = true
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+disallow_any_unimported = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.uv]
+package = true

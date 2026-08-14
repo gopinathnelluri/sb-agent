@@ -1,0 +1,79 @@
+# JVM rules, evaluated against normalised jvm.config flags.
+#
+# The parser rewrites -XX:+Flag as "-XX:Flag = true", so a boolean flag is
+# checked with `equals` like any other value.
+
+- id: SEP-JVM-001
+  domain: jvm
+  property: "-Xmx"
+  summary: maximum JVM heap is not set
+  check:
+    kind: required
+  on_missing: fail
+  severity: critical
+  rationale: >-
+    Without -Xmx the JVM picks a default from the container's visible memory,
+    which under OpenShift is frequently not the limit the pod actually has.
+    Every memory rule also divides against this value, so its absence blinds
+    the rest of the checks.
+  applies_to:
+    roles: [coordinator, worker]
+
+- id: SEP-JVM-002
+  domain: jvm
+  property: "-XX:ExitOnOutOfMemoryError"
+  check:
+    kind: equals
+    value: "true"
+  on_missing: fail
+  severity: high
+  rationale: >-
+    A JVM that survives an OutOfMemoryError keeps accepting work while in an
+    unrecoverable state. Exiting lets the orchestrator restart the node
+    cleanly instead of leaving a zombie worker in the cluster.
+  applies_to:
+    roles: [coordinator, worker]
+    sep_version: ">=413"
+
+- id: SEP-JVM-003
+  domain: jvm
+  property: "-XX:HeapDumpOnOutOfMemoryError"
+  check:
+    kind: equals
+    value: "true"
+  on_missing: skip
+  severity: low
+  rationale: >-
+    Without a heap dump an out-of-memory incident leaves nothing to diagnose
+    afterwards, and the condition is rarely reproducible on demand.
+  applies_to:
+    roles: [coordinator, worker]
+
+- id: SEP-JVM-004
+  domain: jvm
+  property: "-XX:G1HeapRegionSize"
+  check:
+    kind: range
+    min: 16M
+    max: 64M
+  on_missing: skip
+  severity: low
+  rationale: >-
+    Very small G1 regions increase collection overhead on large heaps; very
+    large ones waste space through humongous-allocation rounding.
+  applies_to:
+    roles: [coordinator, worker]
+
+- id: SEP-JVM-005
+  domain: jvm
+  summary: worker heap sizes are not uniform across the fleet
+  consistency:
+    kind: equal_across_nodes
+    property: "-Xmx"
+  severity: medium
+  rationale: >-
+    Workers in a fleet are expected to be identically sized. One node with a
+    smaller heap becomes the bottleneck for every distributed query and shows
+    up as unexplained skew.
+  applies_to:
+    roles: [worker]

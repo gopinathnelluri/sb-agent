@@ -1,0 +1,98 @@
+# Memory sizing rules.
+#
+# Every threshold here is relative to the JVM heap rather than absolute,
+# because the right value depends entirely on the instance size. A rule that
+# hardcoded "24GB" would be wrong on every fleet but one.
+
+- id: SEP-MEM-001
+  domain: memory
+  property: query.max-memory-per-node
+  summary: query.max-memory-per-node is not set
+  check:
+    kind: required
+  on_missing: fail
+  severity: high
+  rationale: >-
+    Without an explicit per-node query memory limit the cluster relies on a
+    default that is rarely right for the instance size, and a single large
+    query can exhaust worker heap.
+  applies_to:
+    roles: [coordinator, worker]
+    sep_version: ">=413"
+  doc_ref:
+    source_doc: Starburst Tuning Guide
+    anchor: query.max-memory-per-node
+    version: "413+"
+
+- id: SEP-MEM-002
+  domain: memory
+  property: query.max-memory-per-node
+  check:
+    kind: max_ratio
+    of: jvm_heap
+    ratio: 0.3
+  on_missing: skip
+  severity: high
+  rationale: >-
+    Leaves headroom for non-query JVM allocation. Above roughly 30% of heap a
+    single query can starve the rest of the process and trigger full GC pauses
+    or an out-of-memory kill.
+  applies_to:
+    roles: [coordinator, worker]
+    sep_version: ">=413"
+  doc_ref:
+    source_doc: Starburst Tuning Guide
+    page: 14
+    anchor: query.max-memory-per-node
+    version: "413+"
+
+- id: SEP-MEM-003
+  domain: memory
+  property: memory.heap-headroom-per-node
+  check:
+    kind: min_ratio
+    of: jvm_heap
+    ratio: 0.15
+  on_missing: skip
+  severity: medium
+  rationale: >-
+    Headroom covers memory the query engine does not track, such as buffers
+    and connector overhead. Set too low, the node reports memory as available
+    that it cannot actually give out.
+  applies_to:
+    roles: [coordinator, worker]
+    sep_version: ">=413"
+  doc_ref:
+    source_doc: Starburst Tuning Guide
+    anchor: memory.heap-headroom-per-node
+
+- id: SEP-MEM-004
+  domain: memory
+  property: memory.heap-headroom-per-node
+  check:
+    kind: max_ratio
+    of: jvm_heap
+    ratio: 0.4
+  on_missing: skip
+  severity: low
+  rationale: >-
+    Headroom above 40% of heap wastes a large share of the node: that memory
+    is reserved away from queries and never used for anything else.
+  applies_to:
+    roles: [coordinator, worker]
+    sep_version: ">=413"
+
+- id: SEP-MEM-005
+  domain: memory
+  property: query.max-memory
+  summary: cluster-wide query memory limit is not set
+  check:
+    kind: required
+  on_missing: fail
+  severity: medium
+  rationale: >-
+    The cluster-wide limit is what stops one distributed query from consuming
+    the whole cluster's memory across all workers.
+  applies_to:
+    roles: [coordinator]
+    sep_version: ">=413"

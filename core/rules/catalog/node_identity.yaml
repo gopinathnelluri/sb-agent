@@ -1,0 +1,63 @@
+# Node identity rules.
+#
+# These are the fleet-drift checks that per-node backup directories exist to
+# make possible. They cannot be expressed as a single-property threshold: the
+# defect is disagreement between nodes, and each individual value looks fine.
+
+- id: SEP-NODE-001
+  domain: node_identity
+  summary: node.environment differs across nodes in the same role
+  consistency:
+    kind: equal_across_nodes
+    property: node.environment
+  severity: high
+  rationale: >-
+    Nodes only join a cluster when node.environment matches exactly. A node
+    with a different value silently forms its own cluster of one and never
+    appears as a worker, while looking healthy in isolation.
+  applies_to:
+    roles: [coordinator, worker]
+
+- id: SEP-NODE-002
+  domain: node_identity
+  summary: coordinator and workers disagree on node.environment
+  consistency:
+    kind: equal_across_roles
+    property: node.environment
+  severity: critical
+  rationale: >-
+    A coordinator and its workers must share node.environment. When they
+    differ the workers never register and the cluster runs with no capacity,
+    which presents to users as every query queueing forever.
+  applies_to:
+    roles: [coordinator, worker]
+
+- id: SEP-NODE-003
+  domain: node_identity
+  property: node.environment
+  check:
+    kind: matches
+    pattern: "^[a-z0-9][a-z0-9_]*$"
+  on_missing: fail
+  severity: medium
+  rationale: >-
+    node.environment must be lowercase alphanumeric with underscores. Values
+    containing hyphens or uppercase characters are rejected at startup.
+  applies_to:
+    roles: [coordinator, worker]
+
+- id: SEP-NODE-004
+  domain: node_identity
+  property: node.data-dir
+  summary: node.data-dir is not set
+  check:
+    kind: required
+  on_missing: fail
+  severity: medium
+  rationale: >-
+    Under OpenShift the container runs as a random UID and cannot write to a
+    default path under the image's home directory. An explicit data directory
+    on a writable mount avoids a startup failure that only appears in the
+    cluster, never in local testing.
+  applies_to:
+    roles: [coordinator, worker]

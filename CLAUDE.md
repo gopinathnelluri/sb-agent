@@ -4,12 +4,12 @@ MCP server exposing Starburst/Trino cluster config validation and query
 analysis as tools. Consumed by an existing LangGraph parent agent
 (migrating to Google ADK at some point). Deployed to OpenShift.
 
-Full design in `docs/SPEC.md`. Read it before starting new work.
+Full design in `SPEC.md`. Read it before starting new work.
 
 ## This service contains no LLM
 
-Pure code execution. No LLM calls anywhere in `core/`, `adapters/`, or
-`mcp_server/`. Same inputs always produce the same outputs.
+Pure code execution. No LLM calls anywhere under `mcp-server/`. Same
+inputs always produce the same outputs.
 
 The parent agent owns the LLM: it decides which tools to call and writes
 the prose. We return structured findings with evidence. If you are about
@@ -19,7 +19,13 @@ rule or a detector instead.
 Only permitted model use: embeddings for the optional local doc index,
 precomputed at build time and shipped in the image.
 
-## Layering
+## Repo layout
+
+    mcp-server/   this MCP server; contains no LLM (see below)
+    SPEC.md       design for the MCP server
+    CLAUDE.md     this file
+
+## Layering inside `mcp-server/`
 
     core/         pure logic, fully unit-testable, no network at import time
     adapters/     IBM COS client, Trino client, local doc index

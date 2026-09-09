@@ -68,6 +68,21 @@ class Role(StrEnum):
     RANGER = "ranger"
 
 
+class Owner(StrEnum):
+    """Who can actually act on a finding.
+
+    Severity says how bad; this says whose problem it is. An analyst reading
+    two high-severity findings needs to know which one they can fix in their
+    SQL and which one belongs to whoever runs the cluster -- without it, the
+    only safe reading is "everything is my fault", which is wrong and wastes
+    their time.
+    """
+
+    QUERY_AUTHOR = "query_author"
+    PLATFORM_TEAM = "platform_team"
+    DATA_OWNER = "data_owner"
+
+
 class RationaleSource(StrEnum):
     """Where a finding's rationale text came from.
 
@@ -151,6 +166,9 @@ class Finding:
     expected: str | None = None
     deviation: float | None = None
     doc_ref: DocRef | None = None
+    owner: Owner = Owner.PLATFORM_TEAM
+    next_step: str | None = None
+    is_root_cause: bool = False
 
 
 @dataclass(frozen=True)
@@ -419,15 +437,26 @@ class RuleRunResult:
 
 
 def sort_findings(findings: list[Finding]) -> list[Finding]:
-    """Rank findings so the most severe are read first.
+    """Rank findings so the most useful are read first.
 
-    A ``scope=all`` validation can fire dozens of findings and the parent's
-    model will attend to the top of the list. Ordering is therefore part of
-    the contract, not a presentation detail. Ties break on relative deviation
-    (a value 300% over a limit outranks one 5% over), then on rule id so the
-    output stays deterministic.
+    A validation or analysis can fire dozens of findings and the reader
+    attends to the top of the list, so ordering is part of the contract, not
+    a presentation detail.
+
+    Within a severity, a root cause outranks a symptom. A finding that says
+    *why* something happened is more actionable than one that says *what*
+    happened, and without this a diagnosis can sort below the very symptom it
+    explains.
+
+    Remaining ties break on relative deviation (a value 300% over a limit
+    outranks one 5% over), then on rule id so the output stays deterministic.
     """
     return sorted(
         findings,
-        key=lambda f: (f.severity.rank, -(f.deviation or 0.0), f.rule_id),
+        key=lambda f: (
+            f.severity.rank,
+            not f.is_root_cause,
+            -(f.deviation or 0.0),
+            f.rule_id,
+        ),
     )

@@ -36,6 +36,7 @@ _CONSISTENCY_KINDS: frozenset[str] = frozenset(
 
 _COMMON_FIELDS = {
     "id",
+    "next_step",
     "domain",
     "severity",
     "rationale",
@@ -91,6 +92,7 @@ class PropertyRule:
     summary: str | None = None
     on_missing: OnMissing = "skip"
     doc_ref: DocRef | None = None
+    next_step: str | None = None
 
     def headline(self) -> str:
         return self.summary or f"{self.property} {self.check.describe()}"
@@ -114,6 +116,7 @@ class ConsistencyRule:
     applies_to: AppliesTo
     summary: str | None = None
     doc_ref: DocRef | None = None
+    next_step: str | None = None
 
     def headline(self) -> str:
         if self.summary:
@@ -214,6 +217,7 @@ def parse_rule(raw: dict[str, Any]) -> Rule:
     applies_to = AppliesTo.parse(raw.get("applies_to"), rule_id)
     doc_ref = _doc_ref(raw.get("doc_ref"), raw.get("source"), rule_id)
     summary = str(raw["summary"]).strip() if raw.get("summary") else None
+    next_step = str(raw["next_step"]).strip() if raw.get("next_step") else None
 
     if has_check:
         prop = str(raw.get("property") or "").strip()
@@ -240,6 +244,7 @@ def parse_rule(raw: dict[str, Any]) -> Rule:
             summary=summary,
             on_missing=_narrow_on_missing(on_missing),
             doc_ref=doc_ref,
+            next_step=next_step,
         )
 
     spec = raw["consistency"]
@@ -270,6 +275,7 @@ def parse_rule(raw: dict[str, Any]) -> Rule:
         applies_to=applies_to,
         summary=summary,
         doc_ref=doc_ref,
+        next_step=next_step,
     )
 
 

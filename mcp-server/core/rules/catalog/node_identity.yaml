@@ -11,6 +11,8 @@
     kind: equal_across_nodes
     property: node.environment
   severity: high
+  next_step: >-
+    Set node.environment to the same value on every node in the role. A node that differs never joins the cluster.
   rationale: >-
     Nodes only join a cluster when node.environment matches exactly. A node
     with a different value silently forms its own cluster of one and never
@@ -25,6 +27,8 @@
     kind: equal_across_roles
     property: node.environment
   severity: critical
+  next_step: >-
+    Make node.environment identical on the coordinator and every worker, then restart. Until it matches, workers never register and every query queues forever.
   rationale: >-
     A coordinator and its workers must share node.environment. When they
     differ the workers never register and the cluster runs with no capacity,
@@ -40,6 +44,8 @@
     pattern: "^[a-z0-9][a-z0-9_]*$"
   on_missing: fail
   severity: medium
+  next_step: >-
+    Change node.environment to lowercase alphanumeric with underscores only. Hyphens and capitals are rejected at startup.
   rationale: >-
     node.environment must be lowercase alphanumeric with underscores. Values
     containing hyphens or uppercase characters are rejected at startup.
@@ -54,6 +60,8 @@
     kind: required
   on_missing: fail
   severity: medium
+  next_step: >-
+    Set node.data-dir to a path on a writable mounted volume. The container runs as a random UID and cannot write to the image's default location.
   rationale: >-
     Under OpenShift the container runs as a random UID and cannot write to a
     default path under the image's home directory. An explicit data directory

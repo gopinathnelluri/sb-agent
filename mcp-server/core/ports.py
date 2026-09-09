@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from core.analysis.models import QueryInfo
+from core.analysis.sql.models import TableFacts
 from core.models import (
     ClusterDiff,
     ClusterInfo,
@@ -79,6 +81,35 @@ class ConfigRepository(Protocol):
 
     def read(self, cluster: str, file: BackupFile) -> str:
         """Read one file's text."""
+        ...
+
+
+@runtime_checkable
+class QueryRepository(Protocol):
+    """Read-only access to completed-query history and table metadata.
+
+    Like ``ConfigRepository``, this is deliberately dumb: it fetches, it does
+    not interpret. Detectors and SQL analysis run against whatever it returns,
+    so the same analysis code works over an audit catalog today and a
+    coordinator REST payload later.
+    """
+
+    def get_query(self, cluster: str, query_id: str) -> QueryInfo | None:
+        """One completed query, or None when the id is unknown or expired."""
+        ...
+
+    def table_facts(
+        self, table: str, catalog: str | None, schema: str | None
+    ) -> TableFacts:
+        """Partition columns and stats availability for one table.
+
+        Used to promote a suspected SQL pattern to a confirmed one. Returns
+        empty facts rather than raising when the table cannot be inspected.
+        """
+        ...
+
+    def retention_days(self) -> int | None:
+        """How far back the history goes, when the source can report it."""
         ...
 
 

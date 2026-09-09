@@ -223,4 +223,5 @@ def _finding(
         expected=expected,
         deviation=deviation,
         doc_ref=rule.doc_ref,
+        next_step=rule.next_step,
     )

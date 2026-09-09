@@ -1,0 +1,71 @@
+# Column mapping for a Starburst/Trino event-logger audit table.
+#
+# Maps our QueryInfo field names to the columns your audit store actually
+# uses. Adding a cluster whose schema differs, or absorbing an upgrade that
+# renames a column, is an edit here -- not a code change.
+#
+# Every mapping is optional. A field with no column is left None, the
+# detectors that need it are skipped, and the skip is reported in coverage.
+# So an incorrect guess here degrades the analysis; it never corrupts it.
+#
+# VERIFY THESE AGAINST YOUR TABLE before trusting the output --
+# run scripts/discover_audit_schema.sql step 3 and correct what differs.
+
+name: sep_event_logger
+description: >-
+  Default profile matching the common Starburst event-logger schema.
+  Unverified against this fleet; column names are the usual defaults.
+
+# Where the query history lives on the master cluster.
+table:
+  catalog: "${AUDIT_CATALOG}"
+  schema: "${AUDIT_SCHEMA}"
+  name: completed_queries
+
+# Which column identifies the originating cluster, when one table holds many.
+cluster_column: environment
+
+columns:
+  query_id: query_id
+  state: query_state
+  sql: query
+  user: user
+  session_catalog: catalog
+  session_schema: schema
+
+  elapsed_ms: wall_time_ms
+  queued_ms: queued_time_ms
+  planning_ms: planning_time_ms
+  execution_ms: execution_time_ms
+  cpu_ms: cpu_time_ms
+
+  peak_memory_bytes: peak_memory_bytes
+  total_bytes_scanned: total_bytes
+  total_rows: total_rows
+  output_rows: output_rows
+  written_rows: written_rows
+  completed_splits: completed_splits
+
+  error_code: error_code
+  error_message: failure_message
+
+  started_at: create_time
+  ended_at: end_time
+
+  # Not in every schema. Left unmapped means the spilling detector is skipped
+  # rather than reporting "no spill" for a query that spilled heavily.
+  spilled_bytes: null
+
+# Optional column holding the full statistics payload. When present and
+# parseable, the operator-level detectors become available.
+payload:
+  column: null          # e.g. operator_summaries, stage_statistics, payload
+  format: json          # json | json_array_of_strings
+
+# Normalises this source's state values onto QueryState.
+state_values:
+  finished: [FINISHED, SUCCEEDED, DONE]
+  failed: [FAILED, ERROR]
+  cancelled: [CANCELLED, CANCELED, ABORTED, KILLED]
+  running: [RUNNING, EXECUTING]
+  queued: [QUEUED, WAITING]

@@ -12,6 +12,8 @@
     kind: required
   on_missing: fail
   severity: high
+  next_step: >-
+    Set query.max-memory-per-node in config.properties, sized to roughly 30% of the JVM heap, then restart the affected nodes.
   rationale: >-
     Without an explicit per-node query memory limit the cluster relies on a
     default that is rarely right for the instance size, and a single large
@@ -33,6 +35,8 @@
     ratio: 0.3
   on_missing: skip
   severity: high
+  next_step: >-
+    Lower query.max-memory-per-node to at or below 30% of the JVM heap, or raise -Xmx if the node has spare RAM.
   rationale: >-
     Leaves headroom for non-query JVM allocation. Above roughly 30% of heap a
     single query can starve the rest of the process and trigger full GC pauses
@@ -55,6 +59,8 @@
     ratio: 0.15
   on_missing: skip
   severity: medium
+  next_step: >-
+    Raise memory.heap-headroom-per-node to at least 15% of the JVM heap so untracked allocations have room.
   rationale: >-
     Headroom covers memory the query engine does not track, such as buffers
     and connector overhead. Set too low, the node reports memory as available
@@ -75,6 +81,8 @@
     ratio: 0.4
   on_missing: skip
   severity: low
+  next_step: >-
+    Lower memory.heap-headroom-per-node. Above 40% of heap you are reserving memory that queries can never use.
   rationale: >-
     Headroom above 40% of heap wastes a large share of the node: that memory
     is reserved away from queries and never used for anything else.
@@ -90,6 +98,8 @@
     kind: required
   on_missing: fail
   severity: medium
+  next_step: >-
+    Set query.max-memory on the coordinator so no single distributed query can consume the whole cluster.
   rationale: >-
     The cluster-wide limit is what stops one distributed query from consuming
     the whole cluster's memory across all workers.

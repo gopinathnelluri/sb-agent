@@ -11,6 +11,8 @@
     kind: required
   on_missing: fail
   severity: critical
+  next_step: >-
+    Add an explicit -Xmx to jvm.config sized to the pod's memory limit. Without it the JVM guesses, and under OpenShift it usually guesses wrong.
   rationale: >-
     Without -Xmx the JVM picks a default from the container's visible memory,
     which under OpenShift is frequently not the limit the pod actually has.
@@ -27,6 +29,8 @@
     value: "true"
   on_missing: fail
   severity: high
+  next_step: >-
+    Add -XX:+ExitOnOutOfMemoryError to jvm.config so the orchestrator can restart a node cleanly instead of leaving a half-dead one in the cluster.
   rationale: >-
     A JVM that survives an OutOfMemoryError keeps accepting work while in an
     unrecoverable state. Exiting lets the orchestrator restart the node
@@ -43,6 +47,8 @@
     value: "true"
   on_missing: skip
   severity: low
+  next_step: >-
+    Add -XX:+HeapDumpOnOutOfMemoryError to jvm.config, and point the dump path at a writable mounted volume.
   rationale: >-
     Without a heap dump an out-of-memory incident leaves nothing to diagnose
     afterwards, and the condition is rarely reproducible on demand.
@@ -58,6 +64,8 @@
     max: 64M
   on_missing: skip
   severity: low
+  next_step: >-
+    Set -XX:G1HeapRegionSize between 16M and 64M in jvm.config.
   rationale: >-
     Very small G1 regions increase collection overhead on large heaps; very
     large ones waste space through humongous-allocation rounding.
@@ -71,6 +79,8 @@
     kind: equal_across_nodes
     property: "-Xmx"
   severity: medium
+  next_step: >-
+    Align -Xmx across all workers. One smaller node becomes the bottleneck for every distributed query.
   rationale: >-
     Workers in a fleet are expected to be identically sized. One node with a
     smaller heap becomes the bottleneck for every distributed query and shows

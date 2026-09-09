@@ -21,6 +21,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
+from core.analysis.service import QueryAnalysisService
 from core.errors import StarburstAgentError
 from core.models import (
     ClusterDiff,
@@ -33,6 +34,7 @@ from core.models import (
 )
 from core.ports import ConfigService
 from core.scopes import SCOPE_GUIDE, Scope
+from mcp_server.query_tools import register_query_tools
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -79,8 +81,17 @@ def _formatted(fn: Callable[P, R]) -> Callable[P, R]:
     return fn
 
 
-def build_server(service: ConfigService, *, name: str = "starburst-agent") -> MCPServer:
+def build_server(
+    service: ConfigService,
+    query_service: QueryAnalysisService | None = None,
+    *,
+    name: str = "starburst-agent",
+) -> MCPServer:
     """Construct the MCP server around a service implementation.
+
+    ``query_service`` is optional: config validation works without a live
+    cluster connection, so a deployment that has COS but no Trino credentials
+    still gets the five config tools rather than failing to start.
 
     A factory rather than a module-level singleton so that importing this
     module opens no sockets and reads no credentials -- which is what lets
@@ -234,5 +245,8 @@ def build_server(service: ConfigService, *, name: str = "starburst-agent") -> MC
         cluster to find that out.
         """
         return service.diff_clusters(cluster_a, cluster_b, scopes)
+
+    if query_service is not None:
+        register_query_tools(server, query_service)
 
     return server

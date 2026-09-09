@@ -1,0 +1,127 @@
+"""Contract tests for the query-analysis MCP tools."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from mcp.types import CallToolResult
+
+from core.analysis.models import QueryInfo, QueryState
+from core.analysis.service import QueryAnalysisService
+from mcp_server.server import build_server
+from tests.fakes import FakeConfigService, FakeQueryRepository
+
+SQL = (
+    "SELECT c.name, sum(o.amount) FROM orders o JOIN customers c ON o.cid = c.id "
+    "WHERE year(o.event_date) = 2026 GROUP BY c.name"
+)
+SLOW = QueryInfo(
+    query_id="20260909_00042",
+    cluster="prod",
+    source="audit:test",
+    state=QueryState.FINISHED,
+    sql=SQL,
+    session_catalog="hive",
+    session_schema="sales",
+    elapsed_ms=725_000,
+    queued_ms=41_000,
+    total_bytes_scanned=4_400_000_000_000,
+    output_rows=112,
+)
+
+EXPECTED_QUERY_TOOLS = {"analyze_query", "get_query_info"}
+
+
+def _server() -> Any:
+    service = QueryAnalysisService(
+        FakeQueryRepository(
+            queries={SLOW.query_id: SLOW},
+            partitions={"orders": frozenset({"event_date"})},
+        )
+    )
+    return build_server(FakeConfigService(), service)
+
+
+def _tools() -> dict[str, Any]:
+    return {t.name: t for t in asyncio.run(_server().list_tools())}
+
+
+def _call(name: str, args: dict[str, Any]) -> Any:
+    result = asyncio.run(_server().call_tool(name, args))
+    assert isinstance(result, CallToolResult)
+    return result.structured_content
+
+
+def test_query_tools_are_registered() -> None:
+    assert set(_tools()) >= EXPECTED_QUERY_TOOLS
+
+
+def test_config_tools_still_present() -> None:
+    assert "run_rules" in _tools()
+
+
+def test_query_tools_are_read_only() -> None:
+    for name in EXPECTED_QUERY_TOOLS:
+        annotations = _tools()[name].annotations
+        assert annotations is not None
+        assert annotations.read_only_hint is True
+
+
+def test_tools_have_schemas() -> None:
+    for name in EXPECTED_QUERY_TOOLS:
+        tool = _tools()[name]
+        assert tool.description
+        assert tool.input_schema
+        assert tool.output_schema
+
+
+def test_analyze_query_documents_the_owner_field() -> None:
+    """The model must know that owner tells the user whose problem it is."""
+    description = " ".join((_tools()["analyze_query"].description or "").split())
+    assert "query_author" in description
+    assert "platform_team" in description
+
+
+def test_analyze_query_documents_the_equivalence_contract() -> None:
+    description = " ".join((_tools()["analyze_query"].description or "").split())
+    assert "equivalent" in description
+    assert "caveat" in description
+
+
+def test_analyze_query_states_what_empty_findings_mean() -> None:
+    description = " ".join((_tools()["analyze_query"].description or "").split())
+    assert "coverage.complete" in description
+
+
+def test_findings_reach_the_caller_with_owner_and_next_step() -> None:
+    payload = _call("analyze_query", {"cluster": "prod", "query_id": SLOW.query_id})
+    assert payload is not None
+    assert payload["found"] is True
+    top = payload["findings"][0]
+    assert top["owner"] == "query_author"
+    assert top["next_step"]
+    assert top["is_root_cause"] is True
+
+
+def test_rewrite_reaches_the_caller() -> None:
+    payload = _call("analyze_query", {"cluster": "prod", "query_id": SLOW.query_id})
+    assert payload is not None
+    assert "2026-01-01" in payload["suggested_sql"]
+    assert payload["rewrites"][0]["equivalence"] == "equivalent"
+
+
+def test_unknown_query_is_reported_not_raised() -> None:
+    payload = _call("analyze_query", {"cluster": "prod", "query_id": "nope"})
+    assert payload is not None
+    assert payload["found"] is False
+    assert payload["not_found_reason"]
+
+
+def test_server_without_query_service_omits_the_tools() -> None:
+    """A deployment with no cluster credentials still serves config tools."""
+    names = {
+        t.name for t in asyncio.run(build_server(FakeConfigService()).list_tools())
+    }
+    assert not (EXPECTED_QUERY_TOOLS & names)
+    assert "run_rules" in names

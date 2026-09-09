@@ -8,6 +8,8 @@ property we want when the real one arrives.
 
 from __future__ import annotations
 
+from core.analysis.models import QueryInfo
+from core.analysis.sql.models import TableFacts
 from core.errors import ClusterNotFoundError, UnredactedSecretError
 from core.models import (
     ClusterDiff,
@@ -206,3 +208,39 @@ class FakeConfigService:
             ],
             coverage=self._coverage(),
         )
+
+
+class FakeQueryRepository:
+    """A ``QueryRepository`` returning canned query history.
+
+    Lets the whole query-analysis stack be tested without a cluster, the same
+    way ``FakeConfigService`` does for config validation.
+    """
+
+    def __init__(
+        self,
+        queries: dict[str, QueryInfo] | None = None,
+        partitions: dict[str, frozenset[str]] | None = None,
+        retention: int | None = 30,
+    ) -> None:
+        self.queries = queries or {}
+        self.partitions = partitions or {}
+        self.retention = retention
+        self.facts_requested: list[str] = []
+
+    def get_query(self, cluster: str, query_id: str) -> QueryInfo | None:
+        query = self.queries.get(query_id)
+        if query is None or (query.cluster and query.cluster != cluster):
+            return None
+        return query
+
+    def table_facts(
+        self, table: str, catalog: str | None = None, schema: str | None = None
+    ) -> TableFacts:
+        self.facts_requested.append(table)
+        return TableFacts(
+            name=table, partition_columns=self.partitions.get(table, frozenset())
+        )
+
+    def retention_days(self) -> int | None:
+        return self.retention

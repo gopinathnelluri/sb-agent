@@ -6,6 +6,8 @@ requires-python = ">=3.11,<3.12"
 dependencies = [
     "mcp>=1.2",
     "pyyaml>=6.0.3",
+    "sqlglot>=30.18.0",
+    "trino>=0.336",
     "types-pyyaml>=6.0.12.20260724",
 ]
 
@@ -35,7 +37,7 @@ select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "PT", "RET", "SIM", "TID"]
 "langchain".msg = "core/ must stay framework-free; see CLAUDE.md"
 
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*"]
+module = ["boto3.*", "botocore.*", "trino.*"]
 ignore_missing_imports = true
 
 [tool.mypy]

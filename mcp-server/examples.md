@@ -246,7 +246,7 @@ bare-cluster     sep_version: 429-e (backup_manifest)
 clean-cluster    sep_version: 429-e (backup_manifest)
                  backed up 1 day(s) ago   nodes: {'coordinator': 1, 'worker': 2}
 drifted-cluster  sep_version: 429-e (backup_manifest)
-                 backed up 2 day(s) ago   nodes: {'coordinator': 1, 'worker': 3}
+                 backed up 2 day(s) ago   nodes: {'coordinator': 1, 'hms': 1, 'worker': 3}
 ```
 
 Start here when a cluster is named that you have not seen -- every other
@@ -285,7 +285,7 @@ query.max-memory-per-node on coordinator is 40GB, expected <= 24GB (0.3 x JVM
 heap (-Xmx))
   actual:   40GB
   expected: <= 24GB (0.3 x JVM heap (-Xmx))
-  evidence: coordinator/coord-01/config.properties line 6
+  evidence: coordinator/coord-01.corp.com/etc/starburst/config.properties line 6
 -> Lower query.max-memory-per-node to at or below 30% of the JVM heap, or
 raise -Xmx if the node has spare RAM.
 
@@ -294,15 +294,15 @@ query.max-memory-per-node on worker is 40GB, expected <= 24GB (0.3 x JVM heap
 (-Xmx))
   actual:   40GB
   expected: <= 24GB (0.3 x JVM heap (-Xmx))
-  evidence: worker/worker-01/config.properties line 6
+  evidence: worker/worker-01.corp.com/etc/starburst/config.properties line 6
 -> Lower query.max-memory-per-node to at or below 30% of the JVM heap, or
 raise -Xmx if the node has spare RAM.
 
 [HIGH]  SEP-NODE-001  domain: node_identity  owner: platform_team
 node.environment differs across nodes in the same role
-  actual:   worker-02=prod
+  actual:   worker-02.corp.com=prod
   expected: all 3 worker node(s) set node.environment=production
-  evidence: worker/worker-02/node.properties line 1
+  evidence: worker/worker-02.corp.com/etc/starburst/node.properties line 1
 -> Set node.environment to the same value on every node in the role. A node
 that differs never joins the cluster.
 
@@ -310,7 +310,7 @@ that differs never joins the cluster.
 -XX:ExitOnOutOfMemoryError is not set on coordinator
   actual:   not set
   expected: = true
-  evidence: coordinator/config.properties
+  evidence: coordinator/etc/starburst/config.properties
 -> Add -XX:+ExitOnOutOfMemoryError to jvm.config so the orchestrator can
 restart a node cleanly instead of leaving a half-dead one in the cluster.
 
@@ -382,7 +382,7 @@ findings: 6   coverage.complete: False   rules_evaluated: 8
 maximum JVM heap is not set
   actual:   not set
   expected: must be set
-  evidence: coordinator/config.properties
+  evidence: coordinator/etc/starburst/config.properties
 -> Add an explicit -Xmx to jvm.config sized to the pod's memory limit. Without
 it the JVM guesses, and under OpenShift it usually guesses wrong.
 
@@ -390,7 +390,7 @@ it the JVM guesses, and under OpenShift it usually guesses wrong.
 -XX:ExitOnOutOfMemoryError is not set on coordinator
   actual:   not set
   expected: = true
-  evidence: coordinator/config.properties
+  evidence: coordinator/etc/starburst/config.properties
 -> Add -XX:+ExitOnOutOfMemoryError to jvm.config so the orchestrator can
 restart a node cleanly instead of leaving a half-dead one in the cluster.
 
@@ -398,7 +398,7 @@ restart a node cleanly instead of leaving a half-dead one in the cluster.
 query.max-memory-per-node is not set
   actual:   not set
   expected: must be set
-  evidence: coordinator/config.properties
+  evidence: coordinator/etc/starburst/config.properties
 -> Set query.max-memory-per-node in config.properties, sized to roughly 30% of
 the JVM heap, then restart the affected nodes.
 
@@ -419,6 +419,60 @@ Second, only 8 rules ran here against 24 on the other clusters, and
 does not have could not run at all. Tell the user that: an incomplete
 audit reported as a clean bill of health is the worst outcome
 available.
+
+---
+
+### File permissions, including on files never backed up
+
+**The user asks:**
+
+> Are the config files on `drifted-cluster` locked down properly?
+
+**The agent calls:**
+
+```python
+run_rules(
+    cluster="drifted-cluster",
+    scopes=["file_security"],
+)
+```
+
+**The tool returns:**
+
+```
+findings: 2   coverage.complete: True   rules_evaluated: 3
+
+[CRITICAL]  SEP-SEC-002  domain: file_security  owner: platform_team
+hive.keytab on hms-01.corp.com is 0644 (contents not backed up; permissions
+recorded from the host)
+  actual:   0644
+  expected: no permissions beyond 0600
+  evidence: hms/hms-01.corp.com/opt/sbhms/conf/hive.keytab
+-> chmod 600 the keytab immediately and confirm its owner. If it has been
+readable more widely, treat the principal as compromised and rotate it.
+
+[HIGH]  SEP-SEC-001  domain: file_security  owner: platform_team
+config.properties on coord-01.corp.com is 0644
+  actual:   0644
+  expected: not readable by other users
+  evidence: coordinator/coord-01.corp.com/etc/starburst/config.properties
+-> chmod 640 the file and confirm it is owned by the Starburst service
+account, so only that account and its group can read it.
+```
+
+These findings come from the `*.metadata.json` files the pipeline
+writes beside each config, not from the config contents. A file can
+hold entirely correct settings and still be a finding if every
+account on the host can read it.
+
+The keytab is the case worth understanding. Its *contents* were never
+backed up -- a Kerberos keytab is a credential and has no business in
+an object store. But its metadata was, so we can see it exists and is
+world-readable, and say so, without the secret ever leaving the host.
+
+That is what the note on the finding means: the permissions were
+recorded from the host even though the file itself is absent from the
+backup.
 
 ---
 
@@ -445,12 +499,12 @@ properties: 10   anomalies: 2
 -Xmx  (worker)
   value:                    80G
   consistent_across_nodes:  False
-  differing_nodes:          {'worker-02': '64G'}
+  differing_nodes:          {'worker-02.corp.com': '64G'}
 
 node.environment  (worker)
   value:                    production
   consistent_across_nodes:  False
-  differing_nodes:          {'worker-02': 'prod'}
+  differing_nodes:          {'worker-02.corp.com': 'prod'}
 
 anomalies:
   - -Xmx differs on 1 of 3 worker nodes

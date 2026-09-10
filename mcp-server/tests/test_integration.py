@@ -56,7 +56,7 @@ def test_a_misconfigured_cluster_reports_findings_with_evidence(call: Any) -> No
     finding = next(f for f in payload["findings"] if f["rule_id"] == "SEP-MEM-002")
     assert finding["severity"] == "high"
     assert finding["actual"] == "40GB"
-    assert finding["evidence"][0]["file"] == "config.properties"
+    assert finding["evidence"][0]["file"] == "etc/starburst/config.properties"
     assert finding["evidence"][0]["line"] > 0
     assert finding["rationale_source"] == "rule_catalog"
     assert finding["doc_ref"]["source_doc"] == "Starburst Tuning Guide"
@@ -118,7 +118,7 @@ def test_summary_surfaces_node_drift(call: Any) -> None:
     )
     drifted = [p for p in payload["properties"] if not p["consistent_across_nodes"]]
     assert drifted
-    assert "worker-02" in drifted[0]["differing_nodes"]
+    assert "worker-02.corp.com" in drifted[0]["differing_nodes"]
 
 
 def test_diff_leads_with_unexpected_differences(call: Any) -> None:

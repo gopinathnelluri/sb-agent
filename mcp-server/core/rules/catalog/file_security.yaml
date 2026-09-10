@@ -1,0 +1,63 @@
+# File ownership and permission rules.
+#
+# These evaluate the *.metadata.json files the backup pipeline writes beside
+# each config, not the config contents. They catch a class of problem no
+# property-level rule can express: a correctly configured file that anyone on
+# the host can read.
+#
+# They also apply to files whose contents were deliberately not backed up. A
+# keytab's metadata tells us it exists and how it is protected without the
+# secret ever entering the backup, which is exactly the check we want.
+
+- id: SEP-SEC-001
+  domain: file_security
+  summary: config file is readable by every user on the host
+  file_check:
+    kind: not_world_readable
+    files: "*.properties"
+  severity: high
+  rationale: >-
+    Trino config files routinely hold connection strings, endpoints and
+    internal hostnames, and sometimes credentials the redaction pipeline did
+    not recognise. A world-readable file exposes all of that to any account on
+    the node, including service accounts unrelated to Starburst.
+  next_step: >-
+    chmod 640 the file and confirm it is owned by the Starburst service
+    account, so only that account and its group can read it.
+  applies_to:
+    roles: [coordinator, worker, hms, ranger, cache-service, data-catalog, insights]
+
+- id: SEP-SEC-002
+  domain: file_security
+  summary: keytab is readable beyond its owner
+  file_check:
+    kind: max_mode
+    files: "*.keytab"
+    mode: "0600"
+  severity: critical
+  rationale: >-
+    A Kerberos keytab is a credential. Anyone who can read it can authenticate
+    as the principal it belongs to, with no password required and no further
+    check. It must be readable only by the account that uses it.
+  next_step: >-
+    chmod 600 the keytab immediately and confirm its owner. If it has been
+    readable more widely, treat the principal as compromised and rotate it.
+  applies_to:
+    roles: [coordinator, worker, hms, ranger, cache-service, data-catalog, insights]
+
+- id: SEP-SEC-003
+  domain: file_security
+  summary: config file is group-writable
+  file_check:
+    kind: not_group_writable
+    files: "*.properties"
+  severity: medium
+  rationale: >-
+    A group-writable config lets any member of that group change how the
+    cluster runs, without needing root and without an obvious audit trail.
+    Configuration should be writable only by the account that owns it.
+  next_step: >-
+    Remove group write from the file's permissions, and check who is in the
+    owning group.
+  applies_to:
+    roles: [coordinator, worker, hms, ranger, cache-service, data-catalog, insights]

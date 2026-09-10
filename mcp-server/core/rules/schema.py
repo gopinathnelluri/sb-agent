@@ -23,6 +23,7 @@ import yaml
 
 from core.models import DocRef, Role, Severity
 from core.rules.checks import Check, RuleDefinitionError, build_check
+from core.rules.file_checks import FileCheck, build_file_check
 from core.rules.versions import VersionRange
 from core.scopes import Scope
 
@@ -46,6 +47,7 @@ _COMMON_FIELDS = {
 }
 _PROPERTY_FIELDS = _COMMON_FIELDS | {"property", "check", "on_missing", "summary"}
 _CONSISTENCY_FIELDS = _COMMON_FIELDS | {"consistency", "summary"}
+_FILE_FIELDS = _COMMON_FIELDS | {"file_check", "summary"}
 
 
 @dataclass(frozen=True)
@@ -125,7 +127,36 @@ class ConsistencyRule:
         return f"{self.property} must match across {where}"
 
 
-Rule: TypeAlias = PropertyRule | ConsistencyRule
+@dataclass(frozen=True)
+class MetadataRule:
+    """A check against a file's ownership and permissions.
+
+    Matches files by glob rather than naming one property, because the
+    concern -- "no config file should be world-readable" -- is about a class
+    of files, not a specific setting inside one.
+    """
+
+    id: str
+    domain: Scope
+    file_pattern: str
+    check: FileCheck
+    severity: Severity
+    rationale: str
+    applies_to: AppliesTo
+    summary: str | None = None
+    doc_ref: DocRef | None = None
+    next_step: str | None = None
+
+    @property
+    def property(self) -> str:
+        """The subject this rule concerns, for coverage accounting."""
+        return f"file:{self.file_pattern}"
+
+    def headline(self) -> str:
+        return self.summary or f"{self.file_pattern} {self.check.describe()}"
+
+
+Rule: TypeAlias = PropertyRule | ConsistencyRule | MetadataRule
 
 
 @dataclass(frozen=True)
@@ -191,14 +222,19 @@ def parse_rule(raw: dict[str, Any]) -> Rule:
     if not rule_id:
         raise RuleDefinitionError("Every rule needs a non-empty 'id'.")
 
-    has_check = "check" in raw
-    has_consistency = "consistency" in raw
-    if has_check == has_consistency:
+    kinds = [k for k in ("check", "consistency", "file_check") if k in raw]
+    if len(kinds) != 1:
         raise RuleDefinitionError(
-            f"{rule_id}: a rule needs exactly one of 'check' or 'consistency'."
+            f"{rule_id}: a rule needs exactly one of 'check', 'consistency' or "
+            f"'file_check'; found {len(kinds)}."
         )
+    has_check = kinds[0] == "check"
 
-    allowed = _PROPERTY_FIELDS if has_check else _CONSISTENCY_FIELDS
+    allowed = {
+        "check": _PROPERTY_FIELDS,
+        "consistency": _CONSISTENCY_FIELDS,
+        "file_check": _FILE_FIELDS,
+    }[kinds[0]]
     unknown = set(raw) - allowed
     if unknown:
         raise RuleDefinitionError(
@@ -243,6 +279,32 @@ def parse_rule(raw: dict[str, Any]) -> Rule:
             applies_to=applies_to,
             summary=summary,
             on_missing=_narrow_on_missing(on_missing),
+            doc_ref=doc_ref,
+            next_step=next_step,
+        )
+
+    if kinds[0] == "file_check":
+        spec = raw["file_check"]
+        if not isinstance(spec, dict):
+            raise RuleDefinitionError(f"{rule_id}: 'file_check' must be a mapping.")
+        pattern = str(spec.get("files") or "").strip()
+        if not pattern:
+            raise RuleDefinitionError(
+                f"{rule_id}: file_check needs a 'files' glob, such as '*.properties'."
+            )
+        try:
+            file_check = build_file_check(spec)
+        except ValueError as exc:
+            raise RuleDefinitionError(f"{rule_id}: {exc}") from exc
+        return MetadataRule(
+            id=rule_id,
+            domain=domain,
+            file_pattern=pattern,
+            check=file_check,
+            severity=severity,
+            rationale=rationale,
+            applies_to=applies_to,
+            summary=summary,
             doc_ref=doc_ref,
             next_step=next_step,
         )

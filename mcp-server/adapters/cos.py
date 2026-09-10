@@ -22,10 +22,11 @@ import os
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
+from core.config.layout import FileKind, classify_all, split_role_host
 from core.errors import ClusterNotFoundError, ConfigFileNotFoundError
 from core.models import Role
 from core.parsers import is_parseable
-from core.ports import BackupFile, BackupManifest
+from core.ports import BackupFile, BackupLayout, BackupManifest
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Iterator
@@ -110,24 +111,78 @@ class CosBackupRepository:
         )
 
     def list_files(self, cluster: str) -> list[BackupFile]:
+        """Every object worth reading, classified.
+
+        One prefix listing for the whole cluster; classification happens on
+        the keys, so this costs no object GETs.
+        """
         self._require_cluster(cluster)
         base = self._cluster_prefix(cluster)
+
+        by_host: dict[tuple[Role, str], list[str]] = {}
+        for key in self._keys(f"{base}/"):
+            split = split_role_host(key[len(base) + 1 :])
+            if split is None:
+                continue
+            role_name, host, path = split
+            role = Role.parse(role_name)
+            if role is None:
+                continue
+            by_host.setdefault((role, host), []).append(path)
+
         files: list[BackupFile] = []
+        for (role, host), paths in sorted(
+            by_host.items(), key=lambda item: (item[0][0].value, item[0][1])
+        ):
+            for entry in classify_all(sorted(paths), is_parseable):
+                if entry.kind is FileKind.UNRECOGNISED:
+                    continue
+                files.append(
+                    BackupFile(
+                        role=role,
+                        path=entry.path,
+                        node=host,
+                        kind=entry.kind,
+                        base=entry.base,
+                    )
+                )
+        return files
+
+    def layout(self, cluster: str) -> BackupLayout:
+        """Describe the backup's shape from object keys alone.
+
+        Prefix listings only -- no object is fetched. That is what makes this
+        usable across a fleet of hundreds of clusters, where reading even one
+        file per cluster would run to thousands of requests.
+        """
+        self._require_cluster(cluster)
+        base = self._cluster_prefix(cluster)
+
+        roles: dict[str, set[str]] = {}
+        paths: dict[str, set[str]] = {}
+        unknown: dict[str, set[str]] = {}
+        total = 0
 
         for key in self._keys(f"{base}/"):
-            relative = key[len(base) + 1 :]
-            parts = relative.split("/")
-            if len(parts) < 2 or not is_parseable(parts[-1]):
+            total += 1
+            split = split_role_host(key[len(base) + 1 :])
+            if split is None:
                 continue
-            try:
-                role = Role(parts[0])
-            except ValueError:
+            role_name, host, path = split
+            if Role.parse(role_name) is None:
+                unknown.setdefault(role_name, set()).add(host)
                 continue
-            node, path = _split_node(parts[1:])
-            files.append(BackupFile(role=role, path=path, node=node))
+            roles.setdefault(role_name, set()).add(host)
+            paths.setdefault(role_name, set()).add(
+                path.rsplit("/", 1)[0] if "/" in path else "."
+            )
 
-        return sorted(
-            files, key=lambda item: (item.role.value, item.node or "", item.path)
+        return BackupLayout(
+            cluster=cluster,
+            roles={k: sorted(v) for k, v in sorted(roles.items())},
+            config_paths={k: sorted(v) for k, v in sorted(paths.items())},
+            unknown_roles={k: len(v) for k, v in sorted(unknown.items())},
+            total_objects=total,
         )
 
     def read(self, cluster: str, file: BackupFile) -> str:
@@ -176,15 +231,6 @@ class CosBackupRepository:
             raise ConfigFileNotFoundError("", "", key, None) from exc
         body = response["Body"].read()
         return str(body.decode("utf-8", errors="replace"))
-
-
-def _split_node(parts: list[str]) -> tuple[str | None, str]:
-    """Treat a single intermediate segment as a node directory."""
-    if len(parts) == 1:
-        return None, parts[0]
-    if parts[0] == "catalog":
-        return None, "/".join(parts)
-    return parts[0], "/".join(parts[1:])
 
 
 def _text(value: object) -> str | None:

@@ -31,6 +31,7 @@ from core.models import (
     compute_fingerprint,
     sort_findings,
 )
+from core.ports import BackupLayout
 from core.scopes import Scope
 
 KNOWN_CLUSTERS = ("prod-analytics", "staging-analytics")
@@ -178,6 +179,20 @@ class FakeConfigService:
             content="query.max-memory-per-node=40GB\n",
             redaction_verified=True,
             redactions_applied=[],
+        )
+
+    def describe_backup_layout(self, cluster: str) -> BackupLayout:
+        self._check(cluster)
+        self.calls.append(("describe_backup_layout", cluster))
+        return BackupLayout(
+            cluster=cluster,
+            roles={"coordinator": ["coord-01"], "worker": ["worker-01", "worker-02"]},
+            config_paths={
+                "coordinator": ["etc/starburst"],
+                "worker": ["etc/starburst"],
+            },
+            unknown_roles={"cache-service": 1},
+            total_objects=18,
         )
 
     def diff_clusters(

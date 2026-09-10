@@ -28,6 +28,7 @@ class Scope(StrEnum):
     S3 = "s3"
     RANGER = "ranger"
     AUTH = "auth"
+    FILE_SECURITY = "file_security"
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,20 @@ SCOPES: dict[Scope, ScopeInfo] = {
         summary="Authentication and TLS on the coordinator.",
         symptoms=("cannot log in", "certificate error", "authentication failed"),
         files=("config.properties",),
+    ),
+    Scope.FILE_SECURITY: ScopeInfo(
+        scope=Scope.FILE_SECURITY,
+        summary=(
+            "Ownership and permissions of config files on disk, including "
+            "files whose contents are too sensitive to back up."
+        ),
+        symptoms=(
+            "world-readable config",
+            "wrong file owner",
+            "permissions audit",
+            "keytab exposed",
+        ),
+        files=("*.metadata.json",),
     ),
 }
 

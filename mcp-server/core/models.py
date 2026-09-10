@@ -60,12 +60,30 @@ _SEVERITY_RANK: dict[Severity, int] = {
 
 
 class Role(StrEnum):
-    """Which kind of node a config file belongs to."""
+    """Which kind of node a config file belongs to.
+
+    Values match the directory name the backup pipeline writes. A role
+    directory that is not listed here is not silently skipped -- it is
+    recorded as an unknown role and reported in coverage, because a whole
+    role vanishing from an audit looks identical to a role with nothing
+    wrong.
+    """
 
     COORDINATOR = "coordinator"
     WORKER = "worker"
     HMS = "hms"
     RANGER = "ranger"
+    CACHE_SERVICE = "cache-service"
+    DATA_CATALOG = "data-catalog"
+    INSIGHTS = "insights"
+
+    @classmethod
+    def parse(cls, name: str) -> Role | None:
+        """Return the role for a directory name, or None if unrecognised."""
+        try:
+            return cls(name.strip().lower())
+        except ValueError:
+            return None
 
 
 class QueryDomain(StrEnum):

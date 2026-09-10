@@ -22,6 +22,7 @@ from tests.fakes import FakeConfigService
 
 EXPECTED_TOOLS = {
     "list_clusters",
+    "describe_backup_layout",
     "get_config_summary",
     "run_rules",
     "get_config_detail",

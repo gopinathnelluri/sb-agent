@@ -20,10 +20,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from core.config.layout import FileKind, classify_all
 from core.errors import ClusterNotFoundError, ConfigFileNotFoundError
 from core.models import Role
 from core.parsers import is_parseable
-from core.ports import BackupFile, BackupManifest
+from core.ports import BackupFile, BackupLayout, BackupManifest
 
 MANIFEST = "manifest.json"
 
@@ -63,21 +64,75 @@ class LocalBackupRepository:
         )
 
     def list_files(self, cluster: str) -> list[BackupFile]:
+        """Every object worth reading, classified.
+
+        Unrecognised files are dropped here, but an unrecognised *role* is
+        not -- that is reported by ``layout()`` so a whole role cannot vanish
+        from an audit while looking like a role with nothing wrong.
+        """
         directory = self._cluster_dir(cluster)
         files: list[BackupFile] = []
 
-        for role in Role:
-            role_dir = directory / role.value
-            if not role_dir.is_dir():
+        for role_dir in sorted(p for p in directory.iterdir() if p.is_dir()):
+            role = Role.parse(role_dir.name)
+            if role is None:
                 continue
-            for path in sorted(role_dir.rglob("*")):
-                if not path.is_file() or not is_parseable(path.name):
-                    continue
-                relative = path.relative_to(role_dir)
-                node, sub_path = _split_node(relative, role_dir)
-                files.append(BackupFile(role=role, path=sub_path, node=node))
-
+            for host_dir in sorted(p for p in role_dir.iterdir() if p.is_dir()):
+                paths = [
+                    str(p.relative_to(host_dir))
+                    for p in sorted(host_dir.rglob("*"))
+                    if p.is_file()
+                ]
+                for entry in classify_all(paths, is_parseable):
+                    if entry.kind is FileKind.UNRECOGNISED:
+                        continue
+                    files.append(
+                        BackupFile(
+                            role=role,
+                            path=entry.path,
+                            node=host_dir.name,
+                            kind=entry.kind,
+                            base=entry.base,
+                        )
+                    )
         return files
+
+    def layout(self, cluster: str) -> BackupLayout:
+        """Describe the backup's shape from directory names alone.
+
+        Reads no file. On a real object store this is prefix listings only,
+        which is what keeps it usable across hundreds of clusters.
+        """
+        directory = self._cluster_dir(cluster)
+        roles: dict[str, list[str]] = {}
+        config_paths: dict[str, list[str]] = {}
+        unknown: dict[str, int] = {}
+        total = 0
+
+        for role_dir in sorted(p for p in directory.iterdir() if p.is_dir()):
+            hosts = sorted(p.name for p in role_dir.iterdir() if p.is_dir())
+            objects = [p for p in role_dir.rglob("*") if p.is_file()]
+            total += len(objects)
+
+            if Role.parse(role_dir.name) is None:
+                unknown[role_dir.name] = len(hosts)
+                continue
+
+            roles[role_dir.name] = hosts
+            directories = {
+                str(p.parent.relative_to(role_dir / p.relative_to(role_dir).parts[0]))
+                for p in objects
+                if len(p.relative_to(role_dir).parts) > 1
+            }
+            config_paths[role_dir.name] = sorted(directories)
+
+        return BackupLayout(
+            cluster=cluster,
+            roles=roles,
+            config_paths=config_paths,
+            unknown_roles=unknown,
+            total_objects=total,
+        )
 
     def read(self, cluster: str, file: BackupFile) -> str:
         path = self._path_for(cluster, file)

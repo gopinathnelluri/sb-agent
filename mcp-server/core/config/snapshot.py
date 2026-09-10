@@ -17,6 +17,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 
+from core.config.metadata import FileMetadata
 from core.models import ParseFailure, Role
 from core.parsers import HEAP_MAX_FLAG, ParsedFile
 from core.scopes import SCOPES, Scope
@@ -30,12 +31,20 @@ REPRESENTATIVE = "*"
 class NodeConfig:
     """Every config file belonging to one node.
 
-    ``node`` is ``None`` for a role backed up without per-node directories.
+    ``node`` is the hostname the pipeline backed the files up from. ``files``
+    is keyed by the path beneath that host, which differs by role -- Starburst
+    under ``etc/starburst``, a metastore elsewhere -- and is treated as opaque.
+
+    ``metadata`` is keyed the same way and may contain entries with no
+    matching file: a keytab or licence whose contents were too sensitive to
+    back up still has its ownership and permissions recorded, which is the
+    part worth auditing.
     """
 
     role: Role
     files: dict[str, ParsedFile]
     node: str | None = None
+    metadata: dict[str, FileMetadata] = field(default_factory=dict)
 
     @property
     def label(self) -> str:
@@ -82,6 +91,8 @@ class ClusterSnapshot:
     backed_up_at: str | None = None
     backup_age_days: int | None = None
     parse_failures: list[ParseFailure] = field(default_factory=list)
+    unknown_roles: dict[str, int] = field(default_factory=dict)
+    parse_disagreements: list[str] = field(default_factory=list)
 
     # -- structure ------------------------------------------------------
 
@@ -98,6 +109,14 @@ class ClusterSnapshot:
 
     def node_counts(self) -> dict[str, int]:
         return {role.value: self.node_count(role) for role in self.roles()}
+
+    def metadata_for(self, role: Role) -> list[tuple[NodeConfig, str, FileMetadata]]:
+        """Every recorded file metadata entry for a role."""
+        return [
+            (node, path, meta)
+            for node in self.nodes_for(role)
+            for path, meta in sorted(node.metadata.items())
+        ]
 
     def files_for(self, role: Role) -> list[str]:
         """Distinct file paths backed up for a role."""

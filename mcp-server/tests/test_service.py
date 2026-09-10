@@ -78,7 +78,7 @@ class TestRunRules:
         assert "24GB" in finding.expected
         evidence = finding.evidence[0]
         assert isinstance(evidence, ConfigEvidence)
-        assert evidence.file == "config.properties"
+        assert evidence.file == "etc/starburst/config.properties"
         assert evidence.line is not None
 
     def test_findings_are_sorted_most_severe_first(
@@ -108,9 +108,9 @@ class TestRunRules:
         result = service.run_rules("drifted-cluster", [Scope.NODE_IDENTITY])
         finding = next(f for f in result.findings if f.rule_id == "SEP-NODE-001")
         assert finding.actual is not None
-        assert "worker-02" in finding.actual
+        assert "worker-02.corp.com" in finding.actual
         assert any(
-            isinstance(e, ConfigEvidence) and e.node == "worker-02"
+            isinstance(e, ConfigEvidence) and e.node == "worker-02.corp.com"
             for e in finding.evidence
         )
 
@@ -179,7 +179,7 @@ class TestConfigSummary:
             p for p in summary.properties if p.key == "-Xmx" and p.role is Role.WORKER
         )
         assert drifted.consistent_across_nodes is False
-        assert "worker-02" in drifted.differing_nodes
+        assert "worker-02.corp.com" in drifted.differing_nodes
         assert summary.anomalies
 
 
@@ -193,9 +193,9 @@ class TestConfigDetail:
 
     def test_can_select_a_specific_node(self, service: ConfigValidationService) -> None:
         detail = service.get_config_detail(
-            "drifted-cluster", Role.WORKER, "jvm.config", node="worker-02"
+            "drifted-cluster", Role.WORKER, "jvm.config", node="worker-02.corp.com"
         )
-        assert detail.node == "worker-02"
+        assert detail.node == "worker-02.corp.com"
         assert "-Xmx64G" in detail.content
 
     def test_missing_file_raises(self, service: ConfigValidationService) -> None:

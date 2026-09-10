@@ -356,6 +356,36 @@ def _config_missing_settings() -> str:
     )
 
 
+def _config_file_security() -> str:
+    payload = _call(
+        "run_rules",
+        {"cluster": "drifted-cluster", "scopes": ["file_security"]},
+    )
+    return _config_scenario(
+        "File permissions, including on files never backed up",
+        "Are the config files on `drifted-cluster` locked down properly?",
+        'run_rules(\n    cluster="drifted-cluster",\n    scopes=["file_security"],\n)',
+        payload,
+        trailer=[
+            "These findings come from the `*.metadata.json` files the pipeline",
+            "writes beside each config, not from the config contents. A file can",
+            "hold entirely correct settings and still be a finding if every",
+            "account on the host can read it.",
+            "",
+            "The keytab is the case worth understanding. Its *contents* were never",
+            "backed up -- a Kerberos keytab is a credential and has no business in",
+            "an object store. But its metadata was, so we can see it exists and is",
+            "world-readable, and say so, without the secret ever leaving the host.",
+            "",
+            "That is what the note on the finding means: the permissions were",
+            "recorded from the host even though the file itself is absent from the",
+            "backup.",
+            "",
+            "---",
+        ],
+    )
+
+
 def _config_drift() -> str:
     payload = _call(
         "get_config_summary",
@@ -611,6 +641,7 @@ def render() -> str:
     sections.append(_config_misconfigured())
     sections.append(_config_healthy())
     sections.append(_config_missing_settings())
+    sections.append(_config_file_security())
     sections.append(_config_drift())
     sections.append(_config_diff())
 

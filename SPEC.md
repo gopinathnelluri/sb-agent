@@ -154,10 +154,37 @@ index (if enabled) -> inline YAML rationale (always present).
 
 ## Config backup layout (read-only, in IBM COS)
 
-    configs/<cluster_name>/coordinator/
-    configs/<cluster_name>/worker/
-    configs/<cluster_name>/hms/
-    configs/<cluster_name>/ranger/
+    s3://<bucket>/configs/<cluster>/<role>/<host>/<host's own config path>
+
+    configs/prod-01/coordinator/coord-a.corp/etc/starburst/config.properties
+    configs/prod-01/coordinator/coord-a.corp/etc/starburst/config.properties.json
+    configs/prod-01/coordinator/coord-a.corp/etc/starburst/config.properties.metadata.json
+    configs/prod-01/hms/hms-01.corp/opt/sbhms/conf/hive-site.xml
+    configs/prod-01/cache-service/cache-01.corp/etc/starburst/cache.properties
+
+Roles: coordinator, worker, hms, ranger, cache-service, data-catalog,
+insights. Several hosts per role, several coordinators and metastores per
+cluster. A role directory this build does not recognise is reported as an
+unknown role, never silently skipped -- a role missing from an audit looks
+exactly like a role with nothing wrong.
+
+Everything after the host is opaque. It mirrors that host's real filesystem,
+so it differs by role and by deployment; hardcoding `etc/starburst` would
+break the first metastore that keeps its config elsewhere.
+`describe_backup_layout` reports what is actually there.
+
+Each config may appear three times:
+
+- the file itself -- authoritative, and the only form carrying line numbers
+- `<file>.json` -- the pipeline's parse. Optional. Used as a fallback when
+  our parser fails, and as a cross-check when it does not; a disagreement
+  means one of the two parses is wrong about what the cluster is running.
+  Not used for `jvm.config`, whose flag normalisation is ours alone.
+- `<file>.metadata.json` -- owner, group, permissions
+
+Sensitive files (keytabs, licences) are not backed up, but their
+`.metadata.json` may be. That is enough to audit them: the `file_security`
+rules check a keytab's permissions without the keytab ever leaving the host.
 
 Written by a separate Ansible pipeline that redacts secrets. This service
 must **verify** redaction on read — assert no key matching

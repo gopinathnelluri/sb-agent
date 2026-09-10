@@ -12,11 +12,12 @@ fake, which is why the tool layer can be covered without COS or a cluster.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from core.analysis.models import QueryInfo
 from core.analysis.sql.models import TableFacts
+from core.config.layout import FileKind
 from core.models import (
     ClusterDiff,
     ClusterInfo,
@@ -31,21 +32,47 @@ from core.scopes import Scope
 
 @dataclass(frozen=True)
 class BackupFile:
-    """One config file in a backup, located but not yet read.
+    """One object in a backup, located but not yet read.
 
-    ``node`` is ``None`` for a role stored without per-node directories.
-    ``path`` is relative to the role (or node) directory, so it keeps any
-    sub-directory such as ``catalog/hive.properties``.
+    ``path`` is everything beneath the host directory and is treated as
+    opaque -- it mirrors the host's own filesystem, which differs by role and
+    by deployment.
+
+    ``kind`` says what the object is: the config itself, the pipeline's parsed
+    ``.json`` form of it, or a ``.metadata.json`` holding ownership and
+    permissions. ``base`` is the config all three share, which is how they are
+    matched up.
     """
 
     role: Role
     path: str
     node: str | None = None
+    kind: FileKind = FileKind.CONFIG
+    base: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.base:
+            object.__setattr__(self, "base", self.path)
 
     @property
     def label(self) -> str:
         parts = [self.role.value, self.node, self.path]
         return "/".join(part for part in parts if part)
+
+
+@dataclass(frozen=True)
+class BackupLayout:
+    """The shape of one cluster's backup, without reading any file.
+
+    Answers "what is in here" cheaply -- a prefix listing, no object GETs --
+    which is what makes a fleet of hundreds of clusters navigable.
+    """
+
+    cluster: str
+    roles: dict[str, list[str]] = field(default_factory=dict)
+    config_paths: dict[str, list[str]] = field(default_factory=dict)
+    unknown_roles: dict[str, int] = field(default_factory=dict)
+    total_objects: int = 0
 
 
 @dataclass(frozen=True)
@@ -76,7 +103,11 @@ class ConfigRepository(Protocol):
         ...
 
     def list_files(self, cluster: str) -> list[BackupFile]:
-        """Every config file in a cluster's backup, across roles and nodes."""
+        """Every object in a cluster's backup, across roles and nodes."""
+        ...
+
+    def layout(self, cluster: str) -> BackupLayout:
+        """Describe the backup's shape without reading any file."""
         ...
 
     def read(self, cluster: str, file: BackupFile) -> str:
@@ -152,4 +183,8 @@ class ConfigService(Protocol):
         self, cluster_a: str, cluster_b: str, scopes: list[Scope]
     ) -> ClusterDiff:
         """Compare two clusters within the given scopes."""
+        ...
+
+    def describe_backup_layout(self, cluster: str) -> BackupLayout:
+        """What is in a cluster's backup, without reading any file."""
         ...

@@ -14,6 +14,7 @@ arrive. ``tests/test_context_independence.py`` asserts that this stays true.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from fnmatch import fnmatch
 
 from core.config.snapshot import ClusterSnapshot
 from core.models import (
@@ -26,7 +27,13 @@ from core.models import (
 )
 from core.rules.checks import CheckOutcome, RuleContext
 from core.rules.consistency import evaluate_consistency
-from core.rules.schema import ConsistencyRule, PropertyRule, Rule, RuleCatalog
+from core.rules.schema import (
+    ConsistencyRule,
+    MetadataRule,
+    PropertyRule,
+    Rule,
+    RuleCatalog,
+)
 from core.scopes import Scope
 
 
@@ -80,6 +87,18 @@ def evaluate(
             evaluated += 1
             continue
 
+        if isinstance(rule, MetadataRule):
+            metadata_outcome = _evaluate_metadata_rule(rule, snapshot, roles)
+            if metadata_outcome.files_matched == 0:
+                # Nothing on this cluster the rule is about. Not a gap.
+                continue
+            if metadata_outcome.files_checked == 0:
+                skipped_missing += 1
+                continue
+            evaluated += 1
+            findings.extend(metadata_outcome.findings)
+            continue
+
         for role in roles:
             outcome = _evaluate_property_rule(rule, snapshot, role)
             if outcome is None:
@@ -96,6 +115,83 @@ def evaluate(
         rules_skipped_missing_input=skipped_missing,
         rules_skipped_unknown_version=skipped_unknown_version,
         properties_checked=checked,
+    )
+
+
+@dataclass(frozen=True)
+class _MetadataOutcome:
+    """Findings from one metadata rule, and what it was able to look at.
+
+    ``files_matched`` and ``files_checked`` differ when a file matched the
+    rule's glob but its permissions were not recorded. That is a genuine gap
+    in the backup. Zero matches is not: a cluster with no keytabs is not
+    under-audited by a keytab rule, it simply has nothing for it to say --
+    the same distinction version gating makes.
+    """
+
+    findings: list[Finding]
+    files_matched: int
+    files_checked: int
+
+
+def _evaluate_metadata_rule(
+    rule: MetadataRule, snapshot: ClusterSnapshot, roles: list[Role]
+) -> _MetadataOutcome:
+    """Apply one metadata rule to every matching file across the role's nodes.
+
+    A file whose permissions were not recorded counts as unexaminable rather
+    than as passing, so a backup missing that field shows up as reduced
+    coverage instead of a clean bill of health.
+    """
+    findings: list[Finding] = []
+    matched = 0
+    checked = 0
+
+    for role in roles:
+        for node, path, metadata in snapshot.metadata_for(role):
+            if not fnmatch(path.rsplit("/", 1)[-1], rule.file_pattern):
+                continue
+            matched += 1
+            outcome = rule.check.evaluate(metadata)
+            if outcome.unavailable:
+                continue
+            checked += 1
+            if outcome.passed:
+                continue
+
+            evidence: list[Evidence] = [
+                ConfigEvidence(file=path, role=role, node=node.node)
+            ]
+            note = (
+                ""
+                if metadata.content_backed_up
+                else " (contents not backed up; permissions recorded from the host)"
+            )
+            findings.append(
+                Finding(
+                    rule_id=rule.id,
+                    fingerprint=compute_fingerprint(
+                        rule.id, snapshot.cluster, path, evidence
+                    ),
+                    severity=rule.severity,
+                    domain=rule.domain,
+                    summary=(
+                        f"{path.rsplit('/', 1)[-1]} on {node.label} is "
+                        f"{outcome.actual}{note}"
+                    ),
+                    rationale=rule.rationale,
+                    rationale_source=RationaleSource.RULE_CATALOG,
+                    evidence=evidence,
+                    subject=path,
+                    actual=outcome.actual,
+                    expected=outcome.expected,
+                    doc_ref=rule.doc_ref,
+                    next_step=rule.next_step,
+                )
+            )
+
+    return _MetadataOutcome(
+        findings=findings, files_matched=matched, files_checked=checked
     )
 
 

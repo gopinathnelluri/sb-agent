@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from core.config.diffing import classify
+from core.config.layout import FileKind
+from core.config.metadata import FileMetadata, parse_metadata
 from core.config.redaction import find_unredacted, redact_text
 from core.config.snapshot import ClusterSnapshot, NodeConfig
 from core.enrich import enrich
@@ -41,9 +43,11 @@ from core.models import (
     RuleRunResult,
     sort_findings,
 )
-from core.parsers import ConfigParseError, ParsedFile
+from core.parsers import ConfigParseError, ParsedFile, accepts_parsed_sibling
 from core.parsers import parse as parse_config
-from core.ports import ConfigRepository
+from core.parsers.parsed_json import disagreements as disagreements_between
+from core.parsers.parsed_json import parse_parsed_json
+from core.ports import BackupFile, BackupLayout, ConfigRepository
 from core.rules.engine import evaluate
 from core.rules.schema import RuleCatalog
 from core.scopes import Scope
@@ -78,21 +82,42 @@ class ConfigValidationService:
     # -- tools ----------------------------------------------------------
 
     def list_clusters(self) -> list[ClusterInfo]:
+        """Inventory every cluster with a backup.
+
+        Deliberately reads no config file. The manifest carries the version
+        and timestamp, and roles and node counts come from a prefix listing,
+        so the cost is two cheap calls per cluster rather than one parse of
+        every file it contains. On a fleet of hundreds of clusters that is
+        the difference between a usable inventory and thousands of object
+        reads for a question nobody asked about file contents.
+        """
         clusters: list[ClusterInfo] = []
         for name in self._repository.list_clusters():
-            snapshot = self._snapshot(name)
+            manifest = self._repository.manifest(name)
+            layout = self._repository.layout(name)
+            roles = [role for role in Role if role.value in layout.roles]
             clusters.append(
                 ClusterInfo(
                     name=name,
-                    sep_version=snapshot.sep_version,
-                    sep_version_source=_version_source(snapshot.sep_version_source),
-                    backed_up_at=snapshot.backed_up_at,
-                    backup_age_days=snapshot.backup_age_days,
-                    roles=snapshot.roles(),
-                    node_counts=snapshot.node_counts(),
+                    sep_version=manifest.sep_version,
+                    sep_version_source=(
+                        "backup_manifest" if manifest.sep_version else "unknown"
+                    ),
+                    backed_up_at=manifest.backed_up_at,
+                    backup_age_days=self._age_days(manifest.backed_up_at),
+                    roles=roles,
+                    node_counts={
+                        name: len(hosts) for name, hosts in layout.roles.items()
+                    },
                 )
             )
         return clusters
+
+    def describe_backup_layout(self, cluster: str) -> BackupLayout:
+        """What is in this cluster's backup, without reading any of it."""
+        if cluster not in self._repository.list_clusters():
+            raise ClusterNotFoundError(cluster, self._repository.list_clusters())
+        return self._repository.layout(cluster)
 
     def get_config_summary(self, cluster: str, scopes: list[Scope]) -> ConfigSummary:
         snapshot = self._snapshot(cluster)
@@ -275,32 +300,68 @@ class ConfigValidationService:
 
     def _build_snapshot(self, cluster: str) -> ClusterSnapshot:
         manifest = self._repository.manifest(cluster)
-        grouped: dict[tuple[Role, str | None], dict[str, ParsedFile]] = {}
-        failures: list[ParseFailure] = []
+        entries = self._repository.list_files(cluster)
 
-        for backup_file in self._repository.list_files(cluster):
+        grouped: dict[tuple[Role, str | None], dict[str, ParsedFile]] = {}
+        metadata: dict[tuple[Role, str | None], dict[str, FileMetadata]] = {}
+        failures: list[ParseFailure] = []
+        disagreements: list[str] = []
+
+        # A config whose contents were too sensitive to back up still has its
+        # metadata, so track which bases actually have a file behind them.
+        backed_up = {
+            (f.role, f.node, f.base) for f in entries if f.kind is FileKind.CONFIG
+        }
+        siblings = {
+            (f.role, f.node, f.base): f
+            for f in entries
+            if f.kind is FileKind.PARSED_CONFIG
+        }
+
+        for entry in entries:
+            key = (entry.role, entry.node)
             try:
-                text = self._repository.read(cluster, backup_file)
-                parsed = parse_config(backup_file.path, text)
-            except (ConfigParseError, ConfigFileNotFoundError, OSError) as exc:
+                text = self._repository.read(cluster, entry)
+            except (ConfigFileNotFoundError, OSError) as exc:
                 failures.append(
                     ParseFailure(
-                        file=backup_file.path,
-                        role=backup_file.role,
-                        node=backup_file.node,
+                        file=entry.path,
+                        role=entry.role,
+                        node=entry.node,
                         reason=str(exc),
                     )
                 )
                 continue
-            grouped.setdefault((backup_file.role, backup_file.node), {})[
-                backup_file.path
-            ] = parsed
 
-        nodes = [
-            NodeConfig(role=role, node=node, files=files)
-            for (role, node), files in sorted(
-                grouped.items(), key=lambda item: (item[0][0].value, item[0][1] or "")
+            if entry.kind is FileKind.METADATA:
+                metadata.setdefault(key, {})[entry.base] = parse_metadata(
+                    entry.base,
+                    text,
+                    content_backed_up=(entry.role, entry.node, entry.base) in backed_up,
+                )
+                continue
+
+            if entry.kind is not FileKind.CONFIG:
+                continue
+
+            parsed = self._parse_config(
+                cluster, entry, text, siblings, failures, disagreements
             )
+            if parsed is not None:
+                grouped.setdefault(key, {})[entry.path] = parsed
+
+        keys = sorted(
+            set(grouped) | set(metadata),
+            key=lambda item: (item[0].value, item[1] or ""),
+        )
+        nodes = [
+            NodeConfig(
+                role=role,
+                node=node,
+                files=grouped.get((role, node), {}),
+                metadata=metadata.get((role, node), {}),
+            )
+            for role, node in keys
         ]
 
         version, source = _detect_version(manifest.sep_version, nodes)
@@ -312,7 +373,75 @@ class ConfigValidationService:
             backed_up_at=manifest.backed_up_at,
             backup_age_days=self._age_days(manifest.backed_up_at),
             parse_failures=failures,
+            unknown_roles=self._repository.layout(cluster).unknown_roles,
+            parse_disagreements=disagreements,
         )
+
+    def _parse_config(
+        self,
+        cluster: str,
+        entry: BackupFile,
+        text: str,
+        siblings: dict[tuple[Role, str | None, str], BackupFile],
+        failures: list[ParseFailure],
+        disagreements: list[str],
+    ) -> ParsedFile | None:
+        """Parse one config, using the pipeline's `.json` form where it helps.
+
+        The raw file stays authoritative wherever it parses, because only it
+        carries line numbers and a finding that cannot cite a line is one the
+        reader must take on trust. The sibling earns its place two ways: as a
+        fallback when our parser fails, and as a cross-check when it does not
+        -- a disagreement means one of the two parses is wrong about what the
+        cluster is running, which is worth surfacing rather than hiding.
+        """
+        sibling = siblings.get((entry.role, entry.node, entry.base))
+        sibling_text: str | None = None
+        if sibling is not None and accepts_parsed_sibling(entry.path):
+            try:
+                sibling_text = self._repository.read(cluster, sibling)
+            except (ConfigFileNotFoundError, OSError):
+                sibling_text = None
+
+        try:
+            parsed = parse_config(entry.path, text)
+        except ConfigParseError as exc:
+            if sibling_text is None:
+                failures.append(
+                    ParseFailure(
+                        file=entry.path,
+                        role=entry.role,
+                        node=entry.node,
+                        reason=str(exc),
+                    )
+                )
+                return None
+            try:
+                recovered = parse_parsed_json(entry.path, sibling_text)
+            except ConfigParseError:
+                failures.append(
+                    ParseFailure(
+                        file=entry.path,
+                        role=entry.role,
+                        node=entry.node,
+                        reason=str(exc),
+                    )
+                )
+                return None
+            disagreements.append(
+                f"{entry.label}: unreadable, fell back to the pipeline's parsed "
+                f"copy (no line numbers, so findings cite the file only)"
+            )
+            return recovered
+
+        if sibling_text is not None:
+            try:
+                theirs = parse_parsed_json(entry.path, sibling_text)
+            except ConfigParseError:
+                return parsed
+            for note in disagreements_between(parsed, theirs):
+                disagreements.append(f"{entry.label}: {note}")
+        return parsed
 
     def _resolve_version(
         self, snapshot: ClusterSnapshot, context: InjectedContext | None

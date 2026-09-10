@@ -32,7 +32,7 @@ from core.models import (
     Role,
     RuleRunResult,
 )
-from core.ports import ConfigService
+from core.ports import BackupLayout, ConfigService
 from core.scopes import SCOPE_GUIDE, Scope
 from mcp_server.query_tools import register_query_tools
 
@@ -52,10 +52,10 @@ supply the facts.
 """.replace("\\\n", "").strip()
 
 _CONFIG_USE_CASE = """
-Config auditing -- `list_clusters`, `get_config_summary`, `run_rules`, \
-`get_config_detail`, `diff_clusters`. Answers "is this cluster configured \
-correctly". Reads config backups and evaluates a versioned rule catalog \
-against the scopes you name.
+Config auditing -- `list_clusters`, `describe_backup_layout`, \
+`get_config_summary`, `run_rules`, `get_config_detail`, `diff_clusters`. \
+Answers "is this cluster configured correctly". Reads config backups and \
+evaluates a versioned rule catalog against the scopes you name.
 """.replace("\\\n", "").strip()
 
 _QUERY_USE_CASE = """
@@ -169,6 +169,31 @@ def build_server(
         when it is more than a few days old.
         """
         return service.list_clusters()
+
+    @server.tool(annotations=READ_ONLY)
+    @_formatted
+    @_translate_errors
+    def describe_backup_layout(cluster: str) -> BackupLayout:
+        """Show what is in a cluster's config backup, without reading any of it.
+
+        Use this when you need to know what a cluster is made of before
+        auditing it: which roles exist, how many hosts each has, and where
+        their config files live on those hosts. It reads no file contents, so
+        it is cheap enough to call on any cluster at any time.
+
+        Config paths differ by role and by deployment -- Starburst nodes keep
+        theirs under `etc/starburst`, a metastore somewhere else entirely.
+        This tool reports what is actually there rather than assuming.
+
+        `unknown_roles` names role directories this build does not recognise.
+        They were not audited. Say so if any are present -- an unrecognised
+        role is unexamined, not healthy, and the user may need a newer build
+        or may have a role worth adding.
+
+        For the settings inside those files, call `get_config_summary`. To
+        check them against the rule catalog, call `run_rules`.
+        """
+        return service.describe_backup_layout(cluster)
 
     @server.tool(annotations=READ_ONLY)
     @_formatted

@@ -27,6 +27,15 @@ To read the tool descriptions as the parent's model receives them:
 uv run python scripts/dump_tools.py --schemas
 ```
 
+Worked examples of every tool -- what a user asks, what the tool returns --
+are in [`examples.md`](examples.md). They are generated from the live tools,
+so regenerate after changing a message or a threshold:
+
+```bash
+uv run python scripts/generate_examples.py          # rewrite examples.md
+uv run python scripts/generate_examples.py --check  # fail if stale (CI)
+```
+
 ## Layout
 
 ```
@@ -34,10 +43,13 @@ core/          pure logic; no framework, no LLM, no network at import time
   parsers/     properties, jvm.config, site XML -> keys + line numbers
   config/      per-node snapshot, redaction checks, diff classification
   rules/       check kinds, version gating, engine, catalog/*.yaml
+  analysis/    query detectors, SQL patterns, rewrites, correlation
+    sql/       Trino parsing, anti-patterns, mechanical rewrites
+    profiles/  audit-table column mappings (YAML, not code)
   enrich.py    post-hoc enrichment from injected context
   service.py   the one implementation of ConfigService
   ports.py     the Protocols everything else depends on
-adapters/      local directory and IBM COS backup repositories
+adapters/      local directory, IBM COS, Trino audit catalog
 mcp_server/    thin MCP wrapper; no business logic
 ```
 

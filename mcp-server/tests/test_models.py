@@ -98,7 +98,18 @@ class TestCoverage:
     def test_missing_inputs_are_surfaced(self) -> None:
         coverage = Coverage.build(rules_evaluated=8, rules_skipped_missing_input=2)
         assert coverage.complete is False
-        assert any("config values were absent" in s for s in coverage.blind_spots)
+        assert any("input values were not available" in s for s in coverage.blind_spots)
+
+    def test_duplicate_blind_spots_are_reported_once(self) -> None:
+        """A caller forwarding an inner coverage's spots must not double up."""
+        coverage = Coverage.build(
+            rules_evaluated=4,
+            rules_skipped_missing_input=1,
+            blind_spots=[
+                "1 check(s) skipped: required input values were not available"
+            ],
+        )
+        assert len(coverage.blind_spots) == 1
 
     def test_version_gating_alone_does_not_make_a_run_incomplete(self) -> None:
         """A rule that does not apply to this SEP version is skipped, not failed."""

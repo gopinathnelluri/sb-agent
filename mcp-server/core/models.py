@@ -283,21 +283,24 @@ class Coverage:
             spots.append(f"{len(failures)} config file(s) failed to parse")
         if rules_skipped_missing_input:
             spots.append(
-                f"{rules_skipped_missing_input} rule(s) skipped: required "
-                "config values were absent"
+                f"{rules_skipped_missing_input} check(s) skipped: required "
+                "input values were not available"
             )
         if rules_evaluated == 0:
             spots.append("no rules were evaluated at all")
+        # Deduplicate while preserving order: a caller may forward blind spots
+        # from an inner coverage that already derived the same message.
+        unique = list(dict.fromkeys(spots))
         return cls(
             rules_evaluated=rules_evaluated,
             rules_skipped_version=rules_skipped_version,
             rules_skipped_missing_input=rules_skipped_missing_input,
             files_parsed=files_parsed,
             nodes_seen=nodes_seen,
-            complete=not spots,
+            complete=not unique,
             parse_failures=failures,
             properties_uncovered=list(properties_uncovered or []),
-            blind_spots=spots,
+            blind_spots=unique,
         )
 
 

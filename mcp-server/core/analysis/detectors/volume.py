@@ -7,12 +7,12 @@ from core.analysis.models import QueryInfo
 from core.models import (
     Finding,
     Owner,
+    QueryDomain,
     QueryEvidence,
     RationaleSource,
     Severity,
     compute_fingerprint,
 )
-from core.scopes import Scope
 
 
 def _bytes(value: int | None) -> str:
@@ -47,7 +47,7 @@ class SpillDetector:
                     self.id, query.cluster, query.query_id, evidence
                 ),
                 severity=Severity.MEDIUM,
-                scope=Scope.SPILL,
+                domain=QueryDomain.MEMORY,
                 summary=f"Query spilled {_bytes(spilled)} to disk",
                 rationale=(
                     "Spilling means the query exceeded available memory and fell "
@@ -103,7 +103,7 @@ class ScanAmplificationDetector:
                     self.id, query.cluster, query.query_id, evidence
                 ),
                 severity=Severity.HIGH,
-                scope=Scope.HIVE_CATALOG,
+                domain=QueryDomain.DATA_ACCESS,
                 summary=(
                     f"Scanned {_bytes(scanned)} to return {output:,} row(s) -- "
                     f"{_bytes(int(per_row))} read per row of output"

@@ -28,7 +28,9 @@ precomputed at build time and shipped in the image.
 ## Layering inside `mcp-server/`
 
     core/         pure logic, fully unit-testable, no network at import time
-    adapters/     IBM COS client, Trino client, local doc index
+      rules/      config auditing: catalog, version gating, engine
+      analysis/   query analysis: detectors, SQL parsing, correlation
+    adapters/     IBM COS client, Trino audit client, local backup reader
     mcp_server/   thin MCP wrapper over core — no business logic here
     tests/
 
@@ -37,6 +39,18 @@ It is the only part that survives the LangGraph -> ADK migration.
 
 If you find yourself adding an `if framework ==` branch or importing
 `langgraph` outside a spike, stop and ask.
+
+## Two use cases, deliberately separate
+
+    config auditor    "is this cluster configured correctly?"
+                      reads config backups; findings carry a Scope
+    query analyzer    "why was this query slow?"
+                      reads query history; findings carry a QueryDomain
+
+They share the *shape* of a finding — severity, owner, evidence, coverage —
+and nothing else. Do not tag a query finding with a config `Scope`: it would
+claim a slow query is a fact about `catalog/*.properties`. A test asserts the
+taxonomies stay apart, and mypy proves they cannot overlap.
 
 ## The LLM never evaluates a threshold
 

@@ -16,8 +16,14 @@ examples is what the tools supply, and what a reader can do with it.
 
 ## Use case 2 -- Query-plan Analyzer
 
-Given a cluster and a query id, explain why a query was slow and, where
-it can be proven safe, offer a rewrite. Reads recorded statistics; it
+**A separate use case from the config auditor below.** Different input
+(a query id, not a cluster scope), different question, different answer
+shape. The two share the shape of a finding -- severity, owner, evidence
+-- but not its taxonomy: query findings carry a `QueryDomain` naming an
+aspect of one execution, config findings carry a `Scope` naming a domain
+of cluster configuration.
+
+Given a cluster and a query id, explain why a query was slow and, whereit can be proven safe, offer a rewrite. Reads recorded statistics; it
 re-runs nothing, so it is fast.
 
 Two independent signals are combined. Runtime statistics say what the
@@ -212,9 +218,12 @@ discover.
 
 ---
 
-## Use case 1 -- Cluster Config Validator
+## Use case 1 -- Cluster Config Auditor
 
-Validates a cluster's configuration against a versioned rule catalog.
+**A separate use case from the query analyzer above.** This one asks
+"is this cluster configured correctly" and reads config backups; it
+knows nothing about any individual query.
+
 Scope is always explicit; there is no `validate_everything()`.
 
 ### Validating a cluster

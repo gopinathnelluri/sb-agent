@@ -68,6 +68,26 @@ class Role(StrEnum):
     RANGER = "ranger"
 
 
+class QueryDomain(StrEnum):
+    """What aspect of a query's execution a finding is about.
+
+    Deliberately separate from ``Scope``. A ``Scope`` names a domain of
+    cluster *configuration* and the files that hold it; a ``QueryDomain``
+    names an aspect of how one query *ran*. Reusing the config enum for
+    query findings would claim, for instance, that a query which scanned too
+    much data is a fact about ``catalog/*.properties`` -- which it is not.
+
+    Config auditing and query analysis are two use cases. They share the
+    shape of a finding, not its taxonomy.
+    """
+
+    DATA_ACCESS = "data_access"
+    MEMORY = "memory"
+    SCHEDULING = "scheduling"
+    QUERY_SHAPE = "query_shape"
+    EXECUTION = "execution"
+
+
 class Owner(StrEnum):
     """Who can actually act on a finding.
 
@@ -156,7 +176,7 @@ class Finding:
     rule_id: str
     fingerprint: str
     severity: Severity
-    scope: Scope
+    domain: Scope | QueryDomain
     summary: str
     rationale: str
     rationale_source: RationaleSource

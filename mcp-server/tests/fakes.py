@@ -143,7 +143,7 @@ class FakeConfigService:
                         "SEP-MEM-002", cluster, "query.max-memory-per-node", evidence
                     ),
                     severity=Severity.HIGH,
-                    scope=Scope.MEMORY,
+                    domain=Scope.MEMORY,
                     summary="query.max-memory-per-node exceeds 30% of JVM heap",
                     rationale="Leaves headroom for non-query JVM allocation.",
                     rationale_source=RationaleSource.RULE_CATALOG,

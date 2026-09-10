@@ -99,7 +99,7 @@ class TestRunRules:
         self, service: ConfigValidationService
     ) -> None:
         memory_only = service.run_rules("drifted-cluster", [Scope.MEMORY])
-        assert {f.scope for f in memory_only.findings} == {Scope.MEMORY}
+        assert {f.domain for f in memory_only.findings} == {Scope.MEMORY}
 
     def test_node_drift_is_found_and_names_the_outlier(
         self, service: ConfigValidationService

@@ -136,7 +136,7 @@ def _finding(
             rule.id, snapshot.cluster, rule.property, evidence
         ),
         severity=rule.severity,
-        scope=rule.domain,
+        domain=rule.domain,
         summary=rule.summary or summary,
         rationale=rule.rationale,
         rationale_source=RationaleSource.RULE_CATALOG,

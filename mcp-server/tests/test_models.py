@@ -33,7 +33,7 @@ def _finding(
         rule_id=rule_id,
         fingerprint="x",
         severity=severity,
-        scope=Scope.MEMORY,
+        domain=Scope.MEMORY,
         summary="s",
         rationale="r",
         rationale_source=RationaleSource.RULE_CATALOG,

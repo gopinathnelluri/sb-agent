@@ -14,12 +14,12 @@ from core.analysis.models import QueryInfo
 from core.models import (
     Finding,
     Owner,
+    QueryDomain,
     QueryEvidence,
     RationaleSource,
     Severity,
     compute_fingerprint,
 )
-from core.scopes import Scope
 
 
 def _ms(value: int | None) -> str:
@@ -65,7 +65,7 @@ class QueueDominatedDetector:
                     self.id, query.cluster, query.query_id, evidence
                 ),
                 severity=Severity.HIGH,
-                scope=Scope.RESOURCE_GROUPS,
+                domain=QueryDomain.SCHEDULING,
                 summary=(
                     f"Query spent {_ms(queued)} of {_ms(elapsed)} waiting in the "
                     f"queue ({fraction:.0%}); only {_ms(running)} was actual execution"
@@ -120,7 +120,7 @@ class QueryFailedDetector:
                     self.id, query.cluster, query.query_id, evidence
                 ),
                 severity=Severity.HIGH,
-                scope=Scope.RESOURCE_GROUPS,
+                domain=QueryDomain.EXECUTION,
                 summary=f"Query failed with {query.error_code or 'an unknown error'}",
                 rationale=(
                     "The query did not complete, so its runtime statistics describe "

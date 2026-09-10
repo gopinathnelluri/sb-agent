@@ -18,12 +18,12 @@ from core.analysis.sql.models import Confidence, SqlAnalysis, SqlPattern
 from core.models import (
     Finding,
     Owner,
+    QueryDomain,
     QueryEvidence,
     RationaleSource,
     Severity,
     compute_fingerprint,
 )
-from core.scopes import Scope
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class Correlation:
     pattern_kind: str
     min_confidence: Confidence
     severity: Severity
-    scope: Scope
+    domain: QueryDomain
     owner: Owner
     headline: str
     rationale: str
@@ -49,7 +49,7 @@ CORRELATIONS: tuple[Correlation, ...] = (
         pattern_kind="function_on_filter_column",
         min_confidence=Confidence.CONFIRMED,
         severity=Severity.HIGH,
-        scope=Scope.HIVE_CATALOG,
+        domain=QueryDomain.DATA_ACCESS,
         owner=Owner.QUERY_AUTHOR,
         headline="Partition pruning was defeated by a function in the WHERE clause",
         rationale=(
@@ -69,7 +69,7 @@ CORRELATIONS: tuple[Correlation, ...] = (
         pattern_kind="cross_join",
         min_confidence=Confidence.SUSPECTED,
         severity=Severity.HIGH,
-        scope=Scope.MEMORY,
+        domain=QueryDomain.QUERY_SHAPE,
         owner=Owner.QUERY_AUTHOR,
         headline="Spilling is likely caused by a join with no condition",
         rationale=(
@@ -88,7 +88,7 @@ CORRELATIONS: tuple[Correlation, ...] = (
         pattern_kind="select_star",
         min_confidence=Confidence.SUSPECTED,
         severity=Severity.MEDIUM,
-        scope=Scope.HIVE_CATALOG,
+        domain=QueryDomain.DATA_ACCESS,
         owner=Owner.QUERY_AUTHOR,
         headline="Large scan may be inflated by SELECT *",
         rationale=(
@@ -145,7 +145,7 @@ def correlate(
                     rule.id, query.cluster, query.query_id, evidence
                 ),
                 severity=rule.severity,
-                scope=rule.scope,
+                domain=rule.domain,
                 summary=f"{rule.headline}: {pattern.fragment}",
                 rationale=f"{rule.rationale} {pattern.explanation.capitalize()}.",
                 rationale_source=RationaleSource.RULE_CATALOG,

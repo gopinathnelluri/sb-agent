@@ -10,12 +10,22 @@ regardless of which framework the parent runs on.
 The parent owns the LLM and the conversation. This service is pure code:
 deterministic tools returning structured findings with evidence.
 
-Two use cases:
+Two use cases. They are genuinely separate — different inputs, different
+questions, different answer shapes — and share only the *shape* of a finding
+(severity, owner, evidence), never its taxonomy:
 
-1. **Cluster config validator** — validate a cluster's configuration
-   against documented recommendations, scoped to what the user asked about.
-2. **Query analyzer** — given a cluster + query id (or SQL text), pull
-   everything available and produce an evidence-backed analysis.
+1. **Cluster config auditor** — "is this cluster configured correctly?"
+   Reads config backups from COS, evaluates a versioned rule catalog scoped
+   to the domains the caller names. Findings are tagged with a `Scope`, a
+   domain of cluster configuration.
+2. **Query-plan analyzer** — "why was this query slow?" Reads recorded
+   statistics for one completed query from the audit catalog, correlates them
+   with the query text, and offers a rewrite where one is provably safe.
+   Findings are tagged with a `QueryDomain`, an aspect of one execution.
+
+Reusing the config `Scope` enum for query findings would claim a slow query
+is a fact about `catalog/*.properties`. It is not. The two taxonomies stay
+apart, and a test asserts it.
 
 ## Layering
 
@@ -40,14 +50,14 @@ Two use cases:
 
 ## MCP tool surface
 
-### Use case 1 — config validation
+### Use case 1 — config auditing
 
     list_clusters()
       -> [{name, sep_version, backed_up_at, roles: [...]}]
 
-    resolve_scope(question: str)
-      -> {scopes: ["memory","jvm"], confidence, all_scopes: [...]}
-      # pure keyword/pattern lookup, no model
+    # NOTE: resolve_scope was dropped. Interpreting free text is the caller's
+    # job and it has a model for it; Scope is published as an enum on the
+    # tools that take it, with the symptom -> scope table in the description.
 
     get_config_summary(cluster: str, scope: [str])
       -> {properties: {k: v}, anomalies: [...], sep_version, source_files: [...]}
@@ -172,18 +182,32 @@ than defaulting to `all`.
 
 ## Rule catalog format
 
+Checks are typed kinds with named fields, not expressions. Nothing in the
+catalog is ever parsed as code, so a YAML edit cannot execute anything and
+rule authors need not be trusted like code contributors.
+
 ```yaml
 - id: SEP-MEM-002
   domain: memory
   applies_to:
-    role: coordinator
+    roles: [coordinator, worker]
     sep_version: ">=413"
   property: query.max-memory-per-node
-  check: "value <= 0.3 * jvm_heap"
+  check:
+    kind: max_ratio        # required | equals | one_of | matches
+    of: jvm_heap           # max | min | range | max_ratio | min_ratio
+    ratio: 0.3
+  on_missing: skip         # skip | fail | pass -- absence is its own outcome
   severity: high
   rationale: "Leaves headroom for non-query JVM allocation."
-  source: "Starburst Tuning Guide p.14"
+  next_step: "Lower query.max-memory-per-node to at or below 30% of heap."
+  doc_ref:
+    source_doc: Starburst Tuning Guide
+    page: 14
 ```
+
+Unknown fields are a load-time error. A rule silently disabled by a typo
+looks exactly like a healthy cluster, which is the worst failure available.
 
 Version-gated because config properties change across SEP releases. A rule
 that does not apply to the cluster's version is skipped, not failed.
@@ -203,10 +227,19 @@ returning full per-stage and per-operator statistics. Supplement with:
 - `"<table>$partitions"` (Hive) or `"<table>$files"` / `$manifests` (Iceberg)
 - `EXPLAIN`; `EXPLAIN ANALYZE` only behind the `plan_`/`run_` gate
 
-**Retention gotcha:** completed query info is purged per
-`query.max-history` / `query.min-expire-age`. Snapshot the JSON to our own
-store on completion, or read from Starburst Insights' backend DB if
-available. Confirm which applies before building the ingest path.
+**Retention gotcha:** completed query info is purged from the coordinator per
+`query.max-history` / `query.min-expire-age`, so the live REST endpoint is not
+a usable primary source — users report slow queries hours later.
+
+**Resolved:** the primary source is a master cluster federating each cluster's
+audit catalog, read over SQL. That is also the most upgrade-resilient option
+available, because the schema is ours: `/v1/query/{queryId}` is documented as
+internal and changes between releases with no deprecation cycle. Column names
+live in `core/analysis/profiles/*.yaml` so a schema change is a YAML edit.
+
+**Still open:** whether the audit table carries a full per-operator statistics
+payload. If it does, all nine detectors are buildable. If it carries only
+query-level aggregates, four are — see the detector table below.
 
 ## Detectors
 

@@ -24,6 +24,14 @@ R = TypeVar("R")
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False)
 
+_USE_CASE_NOTE = """
+This tool analyses a *query*. It is a separate use case from the config tools
+on this server -- `run_rules` and friends audit a cluster's configuration and
+answer "is this cluster set up correctly", which is a different question with
+a different answer shape. Do not mix findings from the two: a query finding
+says something about one execution, not about the cluster's config files.
+"""
+
 _OWNER_CONTRACT = """
 Every finding carries an `owner` saying who can act on it:
 
@@ -51,7 +59,10 @@ def _translate_errors(fn: Callable[P, R]) -> Callable[P, R]:
 
 def _formatted(fn: Callable[P, R]) -> Callable[P, R]:
     if fn.__doc__:
-        fn.__doc__ = cleandoc(fn.__doc__).format(owner_contract=_OWNER_CONTRACT.strip())
+        fn.__doc__ = cleandoc(fn.__doc__).format(
+            owner_contract=_OWNER_CONTRACT.strip(),
+            use_case_note=_USE_CASE_NOTE.strip(),
+        )
     return fn
 
 
@@ -79,6 +90,13 @@ def register_query_tools(server: MCPServer, service: QueryAnalysisService) -> No
         rather than `confirmed` should be raised as a question, not a verdict.
 
         {owner_contract}
+
+        Each finding also carries a `domain` naming the aspect of execution it
+        concerns -- `data_access`, `memory`, `scheduling`, `query_shape`, or
+        `execution`. These are query concerns and are deliberately distinct
+        from the config scopes used by `run_rules`.
+
+        {use_case_note}
 
         When `suggested_sql` is present, the query was rewritten mechanically
         and returns the same rows. Show it. Check each entry in `rewrites`:
@@ -111,5 +129,7 @@ def register_query_tools(server: MCPServer, service: QueryAnalysisService) -> No
         Fields that are null were not recorded by the query history for this
         query. That is not the same as zero: a null `spilled_bytes` means the
         source does not track spilling, not that the query did not spill.
+
+        {use_case_note}
         """
         return service.analyze_query(cluster, query_id)

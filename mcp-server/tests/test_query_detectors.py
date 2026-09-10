@@ -195,3 +195,53 @@ class TestThresholds:
 
     def test_empty_config_yields_defaults(self) -> None:
         assert Thresholds.from_mapping(None) == Thresholds()
+
+
+class TestUseCaseSeparation:
+    """Config auditing and query analysis are two use cases.
+
+    They share the shape of a finding -- severity, owner, evidence -- but not
+    its taxonomy. A query finding tagged with a config ``Scope`` would claim
+    to be a fact about config files, which it is not.
+    """
+
+    def test_query_findings_never_carry_a_config_scope(self) -> None:
+        """mypy proves QueryDomain and Scope cannot overlap; this pins it at
+        runtime too, so a future widening of the union is caught here."""
+        from core.models import QueryDomain
+
+        result = analyze(
+            _query(
+                state=QueryState.FAILED,
+                error_code="EXCEEDED_MEMORY_LIMIT",
+                elapsed_ms=600_000,
+                queued_ms=540_000,
+                spilled_bytes=1_000,
+                total_bytes_scanned=4_000_000_000_000,
+                output_rows=1,
+            )
+        )
+        assert result.findings
+        for finding in result.findings:
+            assert isinstance(finding.domain, QueryDomain), finding.rule_id
+
+    def test_every_query_domain_is_reachable(self) -> None:
+        """A taxonomy value nothing emits is dead weight -- keep them earning it."""
+        from core.analysis.correlate import CORRELATIONS
+        from core.models import QueryDomain
+
+        emitted: set[QueryDomain] = {c.domain for c in CORRELATIONS}
+        result = analyze(
+            _query(
+                state=QueryState.FAILED,
+                elapsed_ms=600_000,
+                queued_ms=540_000,
+                spilled_bytes=1_000,
+                total_bytes_scanned=4_000_000_000_000,
+                output_rows=1,
+            )
+        )
+        emitted |= {
+            f.domain for f in result.findings if isinstance(f.domain, QueryDomain)
+        }
+        assert emitted == set(QueryDomain)

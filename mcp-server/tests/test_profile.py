@@ -168,3 +168,85 @@ class TestShippedProfile:
 
     def test_table_location_renders_qualified_name(self) -> None:
         assert TableLocation("a", "b", "c").qualified == "a.b.c"
+
+
+class TestRealSchemaShape:
+    """The shipped profile must match the fleet's actual column list.
+
+    These pin the corrections made after seeing a real completed_queries
+    table, so a future edit cannot quietly reintroduce a guessed column name.
+    """
+
+    def _profile(self, monkeypatch: pytest.MonkeyPatch) -> AuditProfile:
+        monkeypatch.setenv("AUDIT_CATALOG", "audit")
+        monkeypatch.setenv("AUDIT_SCHEMA", "public")
+        return load_profile(default_profile_path())
+
+    def test_user_column_is_usr(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`user` is reserved, so the column is spelled `usr`."""
+        assert self._profile(monkeypatch).columns["user"] == "usr"
+
+    def test_peak_memory_is_the_user_memory_column(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Query limits are enforced against user memory, not total."""
+        profile = self._profile(monkeypatch)
+        assert profile.columns["peak_memory_bytes"] == "peak_user_memory_bytes"
+
+    def test_output_rows_is_unmapped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """This table records output volume in bytes only."""
+        profile = self._profile(monkeypatch)
+        assert "output_rows" not in profile.mapped_fields()
+        assert profile.columns["output_bytes"] == "output_bytes"
+
+    def test_ambiguous_duration_columns_are_left_unmapped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A duration read as milliseconds would be wrong by 1000x.
+
+        `planning_time` and `execution_time` carry no `_ms` suffix, so their
+        units are unconfirmed. Absent is safer than wrong.
+        """
+        profile = self._profile(monkeypatch)
+        assert "planning_ms" not in profile.mapped_fields()
+        assert "execution_ms" not in profile.mapped_fields()
+
+    def test_operator_payload_is_available(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """This is what makes the operator-level detectors buildable at all."""
+        profile = self._profile(monkeypatch)
+        assert profile.has_operator_detail is True
+        assert profile.payload_column == "operator_summaries"
+
+    def test_extra_payloads_are_selected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        profile = self._profile(monkeypatch)
+        assert "cpu_time_distribution" in profile.extra_payloads.values()
+        assert "cpu_time_distribution" in profile.select_list()
+
+    def test_failure_info_unpacks_into_code_and_message(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One structured column, two fields -- the profile absorbs the shape."""
+        profile = self._profile(monkeypatch)
+        query = profile.to_query_info(
+            {
+                "query_id": "q1",
+                "failure_info": '{"errorCode": {"name": "EXCEEDED_MEMORY_LIMIT"},'
+                ' "message": "Query exceeded per-node limit"}',
+            },
+            "prod",
+            "audit",
+        )
+        assert query.error_code == "EXCEEDED_MEMORY_LIMIT"
+        assert query.error_message == "Query exceeded per-node limit"
+
+    def test_plain_text_failure_becomes_the_message(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        profile = self._profile(monkeypatch)
+        query = profile.to_query_info(
+            {"query_id": "q1", "failure_info": "connection reset"}, "prod", "audit"
+        )
+        assert query.error_message == "connection reset"
+        assert query.error_code is None

@@ -1,68 +1,98 @@
-# Column mapping for a Starburst/Trino event-logger audit table.
+# Column mapping for the Starburst completed-queries audit table.
 #
-# Maps our QueryInfo field names to the columns your audit store actually
-# uses. Adding a cluster whose schema differs, or absorbing an upgrade that
-# renames a column, is an edit here -- not a code change.
+# Written against a real column list rather than defaults. Two things are
+# still unverified and marked below: the units of the columns whose names do
+# not carry `_ms`, and whether spill is recorded anywhere outside
+# operator_summaries.
 #
-# Every mapping is optional. A field with no column is left None, the
-# detectors that need it are skipped, and the skip is reported in coverage.
-# So an incorrect guess here degrades the analysis; it never corrupts it.
-#
-# VERIFY THESE AGAINST YOUR TABLE before trusting the output --
-# run scripts/discover_audit_schema.sql step 3 and correct what differs.
+# Adding a cluster whose schema differs, or absorbing an upgrade that renames
+# a column, is an edit here -- not a code change. A field with no column is
+# left None, the detectors that need it are skipped, and the skip is reported
+# in coverage. So a wrong guess degrades the analysis; it never corrupts it.
 
 name: sep_event_logger
 description: >-
-  Default profile matching the common Starburst event-logger schema.
-  Unverified against this fleet; column names are the usual defaults.
+  Starburst event-logger completed_queries, as deployed on this fleet.
+  Carries per-operator statistics, so the full detector set is available.
 
-# Where the query history lives on the master cluster.
 table:
   catalog: "${AUDIT_CATALOG}"
   schema: "${AUDIT_SCHEMA}"
   name: completed_queries
 
-# Which column identifies the originating cluster, when one table holds many.
+# One table holds many clusters; this column says which.
 cluster_column: environment
 
 columns:
   query_id: query_id
   state: query_state
   sql: query
-  user: user
+  # `user` is reserved in most engines, so the column is `usr`.
+  user: usr
   session_catalog: catalog
   session_schema: schema
 
   elapsed_ms: wall_time_ms
   queued_ms: queued_time_ms
-  planning_ms: planning_time_ms
-  execution_ms: execution_time_ms
   cpu_ms: cpu_time_ms
 
-  peak_memory_bytes: peak_memory_bytes
+  # These carry no `_ms` suffix. If they are Trino Duration strings ("1.32s")
+  # rather than integer milliseconds, map them as null until the loader is
+  # taught to read that format -- a duration read as a millisecond count would
+  # be wrong by three orders of magnitude, which is worse than absent.
+  planning_ms: null
+  execution_ms: null
+
+  # Trino reports several peaks. User memory is the one query limits are
+  # enforced against, so it is the one worth comparing to those limits.
+  peak_memory_bytes: peak_user_memory_bytes
+
   total_bytes_scanned: total_bytes
   total_rows: total_rows
-  output_rows: output_rows
+  output_bytes: output_bytes
   written_rows: written_rows
+  written_bytes: written_bytes
   completed_splits: completed_splits
 
-  error_code: error_code
-  error_message: failure_message
+  # Bytes actually read from storage, as distinct from total_bytes which
+  # includes data read between stages. The better denominator for judging
+  # whether a scan was larger than the result justified.
+  physical_input_bytes: physical_input_bytes
+  physical_input_rows: physical_input_rows
+
+  # Shuffle volume. A broadcast join that should have been partitioned shows
+  # up here long before it shows up in wall time.
+  internal_network_bytes: internal_network_bytes
+
+  # This table has no output_rows column -- only output_bytes. Amplification
+  # is therefore measured in bytes read per byte returned.
+  output_rows: null
+
+  # Failure detail is one structured column, not a code and a message.
+  error_info: failure_info
 
   started_at: create_time
   ended_at: end_time
 
-  # Not in every schema. Left unmapped means the spilling detector is skipped
-  # rather than reporting "no spill" for a query that spilled heavily.
+  # Not present at the top level. Trino records spill per operator, so it is
+  # expected inside operator_summaries rather than as its own column.
   spilled_bytes: null
 
-# Optional column holding the full statistics payload. When present and
-# parseable, the operator-level detectors become available.
+# The full per-operator statistics payload. Its presence is what makes skew,
+# join explosion, broadcast sizing and dynamic-filter effectiveness knowable
+# at all -- without it only the query-level detectors can run.
 payload:
-  column: null          # e.g. operator_summaries, stage_statistics, payload
-  format: json          # json | json_array_of_strings
+  column: operator_summaries
+  format: json_array_of_strings
 
-# Normalises this source's state values onto QueryState.
+# Additional structured columns, read alongside the payload.
+extra_payloads:
+  stages: stages
+  cpu_time_distribution: cpu_time_distribution
+  plan_node_stats_and_costs: plan_node_stats_and_costs
+  stage_gc_statistics: stage_gc_statistics
+  accessed_metadata: accessed_metadata
+
 state_values:
   finished: [FINISHED, SUCCEEDED, DONE]
   failed: [FAILED, ERROR]

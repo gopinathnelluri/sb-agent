@@ -26,6 +26,7 @@ class Thresholds:
     min_elapsed_ms_to_judge: int = 5_000
     spill_bytes: int = 1
     scan_amplification_bytes_per_output_row: int = 10_000_000
+    scan_amplification_bytes_per_output_byte: int = 100_000
     min_output_rows_for_amplification: int = 1
     cpu_to_elapsed_ratio_low: float = 0.1
 
@@ -46,10 +47,17 @@ class Thresholds:
 
 
 class Detector(Protocol):
-    """One finding type, computed from a normalised query."""
+    """One finding type, computed from a normalised query.
+
+    ``requires`` names fields that must all be present. ``requires_any`` names
+    groups where any one member will do -- some sources record output volume
+    in rows, others in bytes, and a detector that can work from either should
+    not be skipped for want of one particular spelling.
+    """
 
     id: str
     requires: frozenset[str]
+    requires_any: tuple[frozenset[str], ...]
 
     def detect(self, query: QueryInfo, thresholds: Thresholds) -> list[Finding]:
         """Return zero or more findings. Never raises on missing optional data."""

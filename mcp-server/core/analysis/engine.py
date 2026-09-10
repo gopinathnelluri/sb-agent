@@ -60,6 +60,9 @@ def analyze(
 
     for detector in detectors:
         missing = sorted(detector.requires - available)
+        for group in getattr(detector, "requires_any", ()):
+            if not (group & available):
+                missing.append(" or ".join(sorted(group)))
         if missing:
             skipped.append(SkippedDetector(detector.id, missing))
             continue

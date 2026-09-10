@@ -30,7 +30,8 @@ class SpillDetector:
     """The query spilled to disk -- it did not fit in memory."""
 
     id = "QRY-SPILL-001"
-    requires = frozenset({"spilled_bytes"})
+    requires: frozenset[str] = frozenset({"spilled_bytes"})
+    requires_any: tuple[frozenset[str], ...] = ()
 
     def detect(self, query: QueryInfo, thresholds: Thresholds) -> list[Finding]:
         spilled = query.spilled_bytes
@@ -72,29 +73,59 @@ class SpillDetector:
 
 
 class ScanAmplificationDetector:
-    """Enormous scan for a tiny result -- the classic missing-pruning signature."""
+    """Enormous scan for a tiny result -- the classic missing-pruning signature.
+
+    Works from rows or bytes. Trino's own event logger records output volume
+    in bytes and has no output_rows column at all, so requiring rows would
+    silently disable this detector on the most common source there is.
+    """
 
     id = "QRY-SCAN-001"
-    requires = frozenset({"total_bytes_scanned", "output_rows"})
+    requires: frozenset[str] = frozenset()
+    requires_any: tuple[frozenset[str], ...] = (
+        frozenset({"physical_input_bytes", "total_bytes_scanned"}),
+        frozenset({"output_rows", "output_bytes"}),
+    )
 
     def detect(self, query: QueryInfo, thresholds: Thresholds) -> list[Finding]:
-        scanned = query.total_bytes_scanned
-        output = query.output_rows
-        if scanned is None or output is None:
-            return []
-        if output < thresholds.min_output_rows_for_amplification:
+        # Physical input is the better numerator when recorded: total_bytes
+        # also counts data moved between stages, which is not a scan.
+        scanned = query.physical_input_bytes or query.total_bytes_scanned
+        if scanned is None:
             return []
 
-        per_row = scanned / max(output, 1)
-        if per_row < thresholds.scan_amplification_bytes_per_output_row:
+        if query.output_rows is not None:
+            if query.output_rows < thresholds.min_output_rows_for_amplification:
+                return []
+            ratio = scanned / max(query.output_rows, 1)
+            limit = float(thresholds.scan_amplification_bytes_per_output_row)
+            metric = "bytes_scanned_per_output_row"
+            unit = f"{_bytes(int(ratio))} per output row"
+            expected = (
+                f"< {_bytes(thresholds.scan_amplification_bytes_per_output_row)} "
+                "per output row"
+            )
+            returned = f"{query.output_rows:,} row(s)"
+        elif query.output_bytes is not None:
+            if query.output_bytes <= 0:
+                return []
+            ratio = scanned / query.output_bytes
+            limit = float(thresholds.scan_amplification_bytes_per_output_byte)
+            metric = "bytes_scanned_per_output_byte"
+            unit = f"{ratio:,.0f}x more read than returned"
+            expected = (
+                f"< {thresholds.scan_amplification_bytes_per_output_byte:,}x "
+                "read-to-returned ratio"
+            )
+            returned = _bytes(query.output_bytes)
+        else:
+            return []
+
+        if ratio < limit:
             return []
 
         evidence = [
-            QueryEvidence(
-                stage_id="query",
-                metric="bytes_scanned_per_output_row",
-                value=f"{per_row:.0f}",
-            )
+            QueryEvidence(stage_id="query", metric=metric, value=f"{ratio:.0f}")
         ]
         return [
             Finding(
@@ -104,10 +135,7 @@ class ScanAmplificationDetector:
                 ),
                 severity=Severity.HIGH,
                 domain=QueryDomain.DATA_ACCESS,
-                summary=(
-                    f"Scanned {_bytes(scanned)} to return {output:,} row(s) -- "
-                    f"{_bytes(int(per_row))} read per row of output"
-                ),
+                summary=(f"Scanned {_bytes(scanned)} to return {returned} -- {unit}"),
                 rationale=(
                     "Reading far more data than the result needs usually means the "
                     "scan is not being pruned: a missing partition filter, a "
@@ -125,12 +153,8 @@ class ScanAmplificationDetector:
                     "year(date_col) = 2026, so the engine can skip partitions "
                     "instead of reading them all."
                 ),
-                actual=f"{_bytes(int(per_row))} per output row",
-                expected=(
-                    f"< {_bytes(thresholds.scan_amplification_bytes_per_output_row)} "
-                    "per output row"
-                ),
-                deviation=per_row / thresholds.scan_amplification_bytes_per_output_row
-                - 1,
+                actual=unit,
+                expected=expected,
+                deviation=ratio / limit - 1,
             )
         ]

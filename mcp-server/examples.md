@@ -56,7 +56,7 @@ YEAR(o.order_date) = 2026
 included below and returns the same rows.
 
 [HIGH]  domain: data_access  owner: query_author
-Scanned 4TB to return 6 row(s) -- 683GB read per row of output
+Scanned 4TB to return 6 row(s) -- 683GB per output row
 -> Check the WHERE clause. The usual cause is no filter on the table's
 partition column, or a filter that hides it inside a function -- write
 date_col >= DATE '2026-01-01' rather than year(date_col) = 2026, so the engine

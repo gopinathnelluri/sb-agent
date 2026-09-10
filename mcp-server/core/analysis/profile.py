@@ -13,6 +13,7 @@ the column.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -43,11 +44,17 @@ MAPPABLE_FIELDS: frozenset[str] = frozenset(
         "total_bytes_scanned",
         "total_rows",
         "output_rows",
+        "output_bytes",
         "written_rows",
+        "written_bytes",
         "spilled_bytes",
         "completed_splits",
+        "physical_input_bytes",
+        "physical_input_rows",
+        "internal_network_bytes",
         "error_code",
         "error_message",
+        "error_info",
         "started_at",
         "ended_at",
     }
@@ -62,6 +69,7 @@ _TOP_LEVEL = frozenset(
         "cluster_column",
         "columns",
         "payload",
+        "extra_payloads",
         "state_values",
     }
 )
@@ -93,6 +101,7 @@ class AuditProfile:
     columns: dict[str, str]
     cluster_column: str | None = None
     payload_column: str | None = None
+    extra_payloads: dict[str, str] = field(default_factory=dict)
     state_values: dict[QueryState, frozenset[str]] = field(default_factory=dict)
     description: str = ""
 
@@ -105,7 +114,15 @@ class AuditProfile:
             wanted.append(self.cluster_column)
         if self.payload_column and self.payload_column not in wanted:
             wanted.append(self.payload_column)
+        for column in self.extra_payloads.values():
+            if column not in wanted:
+                wanted.append(column)
         return wanted
+
+    @property
+    def has_operator_detail(self) -> bool:
+        """Whether this source can support the operator-level detectors."""
+        return self.payload_column is not None
 
     def mapped_fields(self) -> frozenset[str]:
         """QueryInfo fields this profile can actually populate."""
@@ -144,6 +161,12 @@ class AuditProfile:
             raw = value(field_name)
             return None if raw is None else str(raw)
 
+        code, message = self._failure(value("error_info"))
+        if code is None:
+            code = as_str("error_code")
+        if message is None:
+            message = as_str("error_message")
+
         return QueryInfo(
             query_id=str(value("query_id") or ""),
             cluster=cluster,
@@ -162,13 +185,48 @@ class AuditProfile:
             total_bytes_scanned=as_int("total_bytes_scanned"),
             total_rows=as_int("total_rows"),
             output_rows=as_int("output_rows"),
+            output_bytes=as_int("output_bytes"),
             written_rows=as_int("written_rows"),
+            written_bytes=as_int("written_bytes"),
+            physical_input_bytes=as_int("physical_input_bytes"),
+            physical_input_rows=as_int("physical_input_rows"),
+            internal_network_bytes=as_int("internal_network_bytes"),
             spilled_bytes=as_int("spilled_bytes"),
             completed_splits=as_int("completed_splits"),
-            error_code=as_str("error_code"),
-            error_message=as_str("error_message"),
+            error_code=code,
+            error_message=message,
             started_at=as_str("started_at"),
             ended_at=as_str("ended_at"),
+        )
+
+    @staticmethod
+    def _failure(raw: Any) -> tuple[str | None, str | None]:
+        """Unpack a structured failure column into a code and a message.
+
+        Sources differ: some record two columns, some one JSON blob. Reading
+        whichever is present keeps the profile the only place that has to know.
+        """
+        if raw is None:
+            return None, None
+        if isinstance(raw, str):
+            stripped = raw.strip()
+            if not stripped:
+                return None, None
+            if not stripped.startswith("{"):
+                return None, stripped
+            try:
+                raw = json.loads(stripped)
+            except json.JSONDecodeError:
+                return None, stripped
+        if not isinstance(raw, dict):
+            return None, str(raw)
+        code = raw.get("errorCode") or raw.get("error_code") or raw.get("type")
+        message = raw.get("message") or raw.get("failureMessage")
+        if isinstance(code, dict):
+            code = code.get("name") or code.get("code")
+        return (
+            None if code is None else str(code),
+            None if message is None else str(message),
         )
 
     def _state(self, raw: str | None) -> QueryState:
@@ -248,6 +306,11 @@ def load_profile(path: Path) -> AuditProfile:
             f"{path.name}: must map {', '.join(sorted(missing_required))}."
         )
 
+    extras_raw = raw.get("extra_payloads") or {}
+    if not isinstance(extras_raw, dict):
+        raise ProfileError(f"{path.name}: 'extra_payloads' must be a mapping.")
+    extras = {str(k): str(v) for k, v in extras_raw.items() if v is not None}
+
     payload_raw = raw.get("payload") or {}
     if not isinstance(payload_raw, dict):
         raise ProfileError(f"{path.name}: 'payload' must be a mapping.")
@@ -279,6 +342,7 @@ def load_profile(path: Path) -> AuditProfile:
             str(raw["cluster_column"]) if raw.get("cluster_column") else None
         ),
         payload_column=str(payload_column) if payload_column else None,
+        extra_payloads=extras,
         state_values=states,
     )
 

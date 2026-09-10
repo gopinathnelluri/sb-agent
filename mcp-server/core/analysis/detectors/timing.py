@@ -36,7 +36,8 @@ class QueueDominatedDetector:
     """Queued time dominates elapsed -- the query waited, it did not run slowly."""
 
     id = "QRY-QUEUE-001"
-    requires = frozenset({"elapsed_ms", "queued_ms"})
+    requires: frozenset[str] = frozenset({"elapsed_ms", "queued_ms"})
+    requires_any: tuple[frozenset[str], ...] = ()
 
     def detect(self, query: QueryInfo, thresholds: Thresholds) -> list[Finding]:
         elapsed = query.elapsed_ms
@@ -98,6 +99,7 @@ class QueryFailedDetector:
 
     id = "QRY-FAIL-001"
     requires: frozenset[str] = frozenset()
+    requires_any: tuple[frozenset[str], ...] = ()
 
     def detect(self, query: QueryInfo, thresholds: Thresholds) -> list[Finding]:
         from core.analysis.models import QueryState

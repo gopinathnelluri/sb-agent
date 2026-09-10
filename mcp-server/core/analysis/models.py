@@ -99,11 +99,25 @@ class QueryInfo:
     total_bytes_scanned: int | None = None
     total_rows: int | None = None
     output_rows: int | None = None
+    output_bytes: int | None = None
     written_rows: int | None = None
+    written_bytes: int | None = None
     spilled_bytes: int | None = None
     completed_splits: int | None = None
 
-    # Failure detail.
+    # Bytes read from storage, as distinct from total_bytes_scanned which also
+    # counts data read between stages. The honest denominator when judging
+    # whether a scan was larger than the result justified.
+    physical_input_bytes: int | None = None
+    physical_input_rows: int | None = None
+
+    # Shuffle volume. A broadcast join that should have been partitioned shows
+    # here long before it shows in wall time.
+    internal_network_bytes: int | None = None
+
+    # Failure detail. Some sources record a code and message separately;
+    # others record one structured blob, which the profile maps to error_info
+    # and the loader unpacks into the two fields above.
     error_code: str | None = None
     error_message: str | None = None
 
@@ -139,9 +153,14 @@ class QueryInfo:
                 "total_bytes_scanned",
                 "total_rows",
                 "output_rows",
+                "output_bytes",
                 "written_rows",
+                "written_bytes",
                 "spilled_bytes",
                 "completed_splits",
+                "physical_input_bytes",
+                "physical_input_rows",
+                "internal_network_bytes",
             )
             if getattr(self, name) is not None
         }

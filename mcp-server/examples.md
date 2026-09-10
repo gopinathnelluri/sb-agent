@@ -226,27 +226,64 @@ knows nothing about any individual query.
 
 Scope is always explicit; there is no `validate_everything()`.
 
-### Validating a cluster
+### Which clusters can I ask about?
 
 **The user asks:**
 
-> Is `drifted-cluster` set up correctly for memory?
+> What clusters do you know about?
 
 **The agent calls:**
 
 ```python
-run_rules(cluster="drifted-cluster", scopes=["memory", "node_identity"])
+list_clusters()
 ```
 
 **The tool returns:**
 
 ```
-findings: 6   coverage.complete: False
+bare-cluster     sep_version: 429-e (backup_manifest)
+                 backed up 1 day(s) ago   nodes: {'coordinator': 1}
+clean-cluster    sep_version: 429-e (backup_manifest)
+                 backed up 1 day(s) ago   nodes: {'coordinator': 1, 'worker': 2}
+drifted-cluster  sep_version: 429-e (backup_manifest)
+                 backed up 2 day(s) ago   nodes: {'coordinator': 1, 'worker': 3}
+```
+
+Start here when a cluster is named that you have not seen -- every other
+tool takes a name from this list.
+
+Two fields earn their place. `sep_version_source` distinguishes a version
+read from the backup manifest from one that was merely hinted: the rule
+catalog is version-gated, so a cluster whose version is unknown has rules
+skipped. And `backup_age_days` matters because findings describe the
+config as of the backup, not as of now.
+
+---
+
+### A cluster with problems
+
+**The user asks:**
+
+> Is `drifted-cluster` set up correctly?
+
+**The agent calls:**
+
+```python
+run_rules(
+    cluster="drifted-cluster",
+    scopes=["memory", "jvm", "node_identity"],
+)
+```
+
+**The tool returns:**
+
+```
+findings: 9   coverage.complete: True   rules_evaluated: 24
 
 [HIGH]  SEP-MEM-002  domain: memory  owner: platform_team
 query.max-memory-per-node on coordinator is 40GB, expected <= 24GB (0.3 x JVM
 heap (-Xmx))
-  actual: 40GB
+  actual:   40GB
   expected: <= 24GB (0.3 x JVM heap (-Xmx))
   evidence: coordinator/coord-01/config.properties line 6
 -> Lower query.max-memory-per-node to at or below 30% of the JVM heap, or
@@ -255,7 +292,7 @@ raise -Xmx if the node has spare RAM.
 [HIGH]  SEP-MEM-002  domain: memory  owner: platform_team
 query.max-memory-per-node on worker is 40GB, expected <= 24GB (0.3 x JVM heap
 (-Xmx))
-  actual: 40GB
+  actual:   40GB
   expected: <= 24GB (0.3 x JVM heap (-Xmx))
   evidence: worker/worker-01/config.properties line 6
 -> Lower query.max-memory-per-node to at or below 30% of the JVM heap, or
@@ -263,15 +300,213 @@ raise -Xmx if the node has spare RAM.
 
 [HIGH]  SEP-NODE-001  domain: node_identity  owner: platform_team
 node.environment differs across nodes in the same role
-  actual: worker-02=prod
+  actual:   worker-02=prod
   expected: all 3 worker node(s) set node.environment=production
   evidence: worker/worker-02/node.properties line 1
 -> Set node.environment to the same value on every node in the role. A node
 that differs never joins the cluster.
 
-... and 3 more
+[HIGH]  SEP-JVM-002  domain: jvm  owner: platform_team
+-XX:ExitOnOutOfMemoryError is not set on coordinator
+  actual:   not set
+  expected: = true
+  evidence: coordinator/config.properties
+-> Add -XX:+ExitOnOutOfMemoryError to jvm.config so the orchestrator can
+restart a node cleanly instead of leaving a half-dead one in the cluster.
+
+... and 5 more
 ```
 
-Every finding cites a file, node, and line. That is what makes the answer
-checkable rather than merely plausible, and it is why `SEP-NODE-001` can
-name the one worker out of three that drifted.
+Every finding cites a file, a node, and a line. That is what makes the
+answer checkable rather than merely plausible -- and it is why
+`SEP-NODE-001` can name the one worker out of three that drifted
+rather than reporting that something, somewhere, is inconsistent.
+
+Note `actual` and `expected` are both present on every finding. The
+reader does not have to take the summary on trust; they can see the
+value that was found and the value the rule wanted.
+
+---
+
+### A healthy cluster
+
+**The user asks:**
+
+> Anything wrong with `clean-cluster`?
+
+**The agent calls:**
+
+```python
+run_rules(
+    cluster="clean-cluster",
+    scopes=["memory", "jvm", "node_identity"],
+)
+```
+
+**The tool returns:**
+
+```
+findings: 0   coverage.complete: True   rules_evaluated: 24
+```
+
+Nothing found, and `coverage.complete` is true with 24 rules actually
+evaluated -- so the silence means the cluster is fine, not that the
+checks could not run. Report it as a clean result.
+
+Contrast this with the next scenario, where an empty-looking result
+would mean something very different.
+
+---
+
+### Settings that were never configured
+
+**The user asks:**
+
+> Check `bare-cluster` for me.
+
+**The agent calls:**
+
+```python
+run_rules(
+    cluster="bare-cluster",
+    scopes=["memory", "jvm", "node_identity"],
+)
+```
+
+**The tool returns:**
+
+```
+findings: 6   coverage.complete: False   rules_evaluated: 8
+
+[CRITICAL]  SEP-JVM-001  domain: jvm  owner: platform_team
+maximum JVM heap is not set
+  actual:   not set
+  expected: must be set
+  evidence: coordinator/config.properties
+-> Add an explicit -Xmx to jvm.config sized to the pod's memory limit. Without
+it the JVM guesses, and under OpenShift it usually guesses wrong.
+
+[HIGH]  SEP-JVM-002  domain: jvm  owner: platform_team
+-XX:ExitOnOutOfMemoryError is not set on coordinator
+  actual:   not set
+  expected: = true
+  evidence: coordinator/config.properties
+-> Add -XX:+ExitOnOutOfMemoryError to jvm.config so the orchestrator can
+restart a node cleanly instead of leaving a half-dead one in the cluster.
+
+[HIGH]  SEP-MEM-001  domain: memory  owner: platform_team
+query.max-memory-per-node is not set
+  actual:   not set
+  expected: must be set
+  evidence: coordinator/config.properties
+-> Set query.max-memory-per-node in config.properties, sized to roughly 30% of
+the JVM heap, then restart the affected nodes.
+
+... and 3 more
+
+coverage.blind_spots:
+  - 5 check(s) skipped: required input values were not available
+```
+
+Two things to notice.
+
+First, `actual: not set`. A property nobody configured is its own
+finding, not a silent pass -- many real misconfigurations are a
+setting left at a default that is wrong for the fleet.
+
+Second, only 8 rules ran here against 24 on the other clusters, and
+`coverage.complete` is false. Rules that needed a value this cluster
+does not have could not run at all. Tell the user that: an incomplete
+audit reported as a clean bill of health is the worst outcome
+available.
+
+---
+
+### How is this cluster actually configured?
+
+**The user asks:**
+
+> What is `node.environment` set to across `drifted-cluster`?
+
+**The agent calls:**
+
+```python
+get_config_summary(
+    cluster="drifted-cluster",
+    scopes=["node_identity", "jvm"],
+)
+```
+
+**The tool returns:**
+
+```
+properties: 10   anomalies: 2
+
+-Xmx  (worker)
+  value:                    80G
+  consistent_across_nodes:  False
+  differing_nodes:          {'worker-02': '64G'}
+
+node.environment  (worker)
+  value:                    production
+  consistent_across_nodes:  False
+  differing_nodes:          {'worker-02': 'prod'}
+
+anomalies:
+  - -Xmx differs on 1 of 3 worker nodes
+  - node.environment differs on 1 of 3 worker nodes
+```
+
+This tool describes configuration; it does not judge it. Use it to answer
+"what is this set to" and to ground yourself before or after running
+rules.
+
+`differing_nodes` is the field that matters. Reporting only the majority
+value would hide the single node that drifted, which is usually the
+actual problem.
+
+---
+
+### It works on one cluster but not another
+
+**The user asks:**
+
+> Queries run fine on `clean-cluster` but keep failing on
+> `drifted-cluster`. What is different?
+
+**The agent calls:**
+
+```python
+diff_clusters(
+    cluster_a="clean-cluster",
+    cluster_b="drifted-cluster",
+    scopes=["memory", "jvm"],
+)
+```
+
+**The tool returns:**
+
+```
+differences: 7
+
+classification property                           clean-cluster -> drifted-cluster
+unexpected    -XX:ExitOnOutOfMemoryError         true -> None
+unexpected    memory.heap-headroom-per-node      16GB -> 4GB
+unexpected    query.max-memory                   200GB -> None
+unexpected    query.max-memory-per-node          24GB -> 40GB
+unexpected    -XX:ExitOnOutOfMemoryError         true -> None
+unexpected    memory.heap-headroom-per-node      16GB -> 4GB
+unexpected    query.max-memory-per-node          24GB -> 40GB
+```
+
+Differences are classified so the real divergence leads. `unexpected`
+means the two clusters disagree on something that normally matches --
+start there. `expected` covers values that differ by design, such as
+hostnames and node ids; mention them only if asked.
+
+Without that classification the result would be dominated by differences
+nobody cares about.
+
+One limit worth stating to the user: this reports differences, not
+correctness. A property can match on both clusters and be wrong on both.
+Run `run_rules` against each to find that out.

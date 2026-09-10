@@ -23,6 +23,7 @@ from core.analysis.models import QueryInfo, QueryState
 from core.analysis.service import QueryAnalysisService
 from core.service import ConfigValidationService
 from mcp_server.server import build_server
+from tests.conftest import FROZEN_NOW
 from tests.fakes import FakeQueryRepository
 
 OUTPUT = Path(__file__).resolve().parent.parent / "examples.md"
@@ -91,7 +92,14 @@ QUERIES: dict[str, QueryInfo] = {
 
 
 def _server() -> Any:
-    config = ConfigValidationService(LocalBackupRepository(FIXTURES))
+    # Pin the clock. The config fixtures carry fixed backup timestamps, so with
+    # a live clock `backup_age_days` grows every day and the generated file
+    # would go stale overnight -- `--check` failing in CI with no code change.
+    # Frozen just after the fixture dates, which is also when a backup is
+    # genuinely fresh enough for a healthy cluster to report complete coverage.
+    config = ConfigValidationService(
+        LocalBackupRepository(FIXTURES), clock=lambda: FROZEN_NOW
+    )
     queries = QueryAnalysisService(
         FakeQueryRepository(
             queries=QUERIES,
@@ -166,6 +174,292 @@ def _scenario(
                 _wrap(f"- {spot}", "  ", "    ") for spot in coverage["blind_spots"]
             ]
     out += ["```", ""]
+    return "\n".join(out)
+
+
+def _config_finding_lines(finding: dict[str, Any]) -> list[str]:
+    evidence = finding["evidence"][0]
+    where = "/".join(
+        part for part in (evidence["role"], evidence["node"], evidence["file"]) if part
+    )
+    lines = [
+        "",
+        f"[{finding['severity'].upper()}]  {finding['rule_id']}  "
+        f"domain: {finding['domain']}  owner: {finding['owner']}",
+        _wrap(finding["summary"]),
+        f"  actual:   {finding['actual']}",
+        f"  expected: {finding['expected']}",
+        f"  evidence: {where}"
+        + (f" line {evidence['line']}" if evidence["line"] else ""),
+    ]
+    if finding.get("next_step"):
+        lines.append(_wrap("-> " + finding["next_step"]))
+    return lines
+
+
+def _config_scenario(
+    title: str,
+    question: str,
+    tool_call: str,
+    payload: dict[str, Any],
+    *,
+    limit: int | None = None,
+    trailer: list[str] | None = None,
+) -> str:
+    out = [f"### {title}", "", "**The user asks:**", "", f"> {question}", ""]
+    out += ["**The agent calls:**", "", "```python", tool_call, "```", ""]
+    out += ["**The tool returns:**", "", "```"]
+    coverage = payload["coverage"]
+    out.append(
+        f"findings: {len(payload['findings'])}   "
+        f"coverage.complete: {coverage['complete']}   "
+        f"rules_evaluated: {coverage['rules_evaluated']}"
+    )
+    shown = payload["findings"][:limit] if limit else payload["findings"]
+    for finding in shown:
+        out += _config_finding_lines(finding)
+    remaining = len(payload["findings"]) - len(shown)
+    if remaining > 0:
+        out += ["", f"... and {remaining} more"]
+    if coverage["blind_spots"]:
+        out += ["", "coverage.blind_spots:"]
+        out += [_wrap(f"- {spot}", "  ", "    ") for spot in coverage["blind_spots"]]
+    out += ["```", ""]
+    if trailer:
+        out += trailer + [""]
+    return "\n".join(out)
+
+
+def _config_inventory() -> str:
+    payload = _call("list_clusters", {})
+    out = [
+        "### Which clusters can I ask about?",
+        "",
+        "**The user asks:**",
+        "",
+        "> What clusters do you know about?",
+        "",
+        "**The agent calls:**",
+        "",
+        "```python",
+        "list_clusters()",
+        "```",
+        "",
+        "**The tool returns:**",
+        "",
+        "```",
+    ]
+    for row in payload["result"]:
+        out.append(
+            f"{row['name']:16} sep_version: {row['sep_version']} "
+            f"({row['sep_version_source']})"
+        )
+        out.append(
+            f"{'':16} backed up {row['backup_age_days']} day(s) ago   "
+            f"nodes: {row['node_counts']}"
+        )
+    out += ["```", ""]
+    out += [
+        "Start here when a cluster is named that you have not seen -- every other",
+        "tool takes a name from this list.",
+        "",
+        "Two fields earn their place. `sep_version_source` distinguishes a version",
+        "read from the backup manifest from one that was merely hinted: the rule",
+        "catalog is version-gated, so a cluster whose version is unknown has rules",
+        "skipped. And `backup_age_days` matters because findings describe the",
+        "config as of the backup, not as of now.",
+        "",
+        "---",
+        "",
+    ]
+    return "\n".join(out)
+
+
+def _config_misconfigured() -> str:
+    payload = _call(
+        "run_rules",
+        {"cluster": "drifted-cluster", "scopes": ["memory", "jvm", "node_identity"]},
+    )
+    return _config_scenario(
+        "A cluster with problems",
+        "Is `drifted-cluster` set up correctly?",
+        'run_rules(\n    cluster="drifted-cluster",\n'
+        '    scopes=["memory", "jvm", "node_identity"],\n)',
+        payload,
+        limit=4,
+        trailer=[
+            "Every finding cites a file, a node, and a line. That is what makes the",
+            "answer checkable rather than merely plausible -- and it is why",
+            "`SEP-NODE-001` can name the one worker out of three that drifted",
+            "rather than reporting that something, somewhere, is inconsistent.",
+            "",
+            "Note `actual` and `expected` are both present on every finding. The",
+            "reader does not have to take the summary on trust; they can see the",
+            "value that was found and the value the rule wanted.",
+            "",
+            "---",
+        ],
+    )
+
+
+def _config_healthy() -> str:
+    payload = _call(
+        "run_rules",
+        {"cluster": "clean-cluster", "scopes": ["memory", "jvm", "node_identity"]},
+    )
+    return _config_scenario(
+        "A healthy cluster",
+        "Anything wrong with `clean-cluster`?",
+        'run_rules(\n    cluster="clean-cluster",\n'
+        '    scopes=["memory", "jvm", "node_identity"],\n)',
+        payload,
+        trailer=[
+            "Nothing found, and `coverage.complete` is true with 24 rules actually",
+            "evaluated -- so the silence means the cluster is fine, not that the",
+            "checks could not run. Report it as a clean result.",
+            "",
+            "Contrast this with the next scenario, where an empty-looking result",
+            "would mean something very different.",
+            "",
+            "---",
+        ],
+    )
+
+
+def _config_missing_settings() -> str:
+    payload = _call(
+        "run_rules",
+        {"cluster": "bare-cluster", "scopes": ["memory", "jvm", "node_identity"]},
+    )
+    return _config_scenario(
+        "Settings that were never configured",
+        "Check `bare-cluster` for me.",
+        'run_rules(\n    cluster="bare-cluster",\n'
+        '    scopes=["memory", "jvm", "node_identity"],\n)',
+        payload,
+        limit=3,
+        trailer=[
+            "Two things to notice.",
+            "",
+            "First, `actual: not set`. A property nobody configured is its own",
+            "finding, not a silent pass -- many real misconfigurations are a",
+            "setting left at a default that is wrong for the fleet.",
+            "",
+            "Second, only 8 rules ran here against 24 on the other clusters, and",
+            "`coverage.complete` is false. Rules that needed a value this cluster",
+            "does not have could not run at all. Tell the user that: an incomplete",
+            "audit reported as a clean bill of health is the worst outcome",
+            "available.",
+            "",
+            "---",
+        ],
+    )
+
+
+def _config_drift() -> str:
+    payload = _call(
+        "get_config_summary",
+        {"cluster": "drifted-cluster", "scopes": ["node_identity", "jvm"]},
+    )
+    drifted = [p for p in payload["properties"] if not p["consistent_across_nodes"]]
+    out = [
+        "### How is this cluster actually configured?",
+        "",
+        "**The user asks:**",
+        "",
+        "> What is `node.environment` set to across `drifted-cluster`?",
+        "",
+        "**The agent calls:**",
+        "",
+        "```python",
+        'get_config_summary(\n    cluster="drifted-cluster",\n'
+        '    scopes=["node_identity", "jvm"],\n)',
+        "```",
+        "",
+        "**The tool returns:**",
+        "",
+        "```",
+        f"properties: {len(payload['properties'])}   "
+        f"anomalies: {len(payload['anomalies'])}",
+    ]
+    for prop in drifted:
+        out += [
+            "",
+            f"{prop['key']}  ({prop['role']})",
+            f"  value:                    {prop['value']}",
+            "  consistent_across_nodes:  False",
+            f"  differing_nodes:          {prop['differing_nodes']}",
+        ]
+    if payload["anomalies"]:
+        out += ["", "anomalies:"]
+        out += [_wrap(f"- {a}", "  ", "    ") for a in payload["anomalies"]]
+    out += ["```", ""]
+    out += [
+        "This tool describes configuration; it does not judge it. Use it to answer",
+        '"what is this set to" and to ground yourself before or after running',
+        "rules.",
+        "",
+        "`differing_nodes` is the field that matters. Reporting only the majority",
+        "value would hide the single node that drifted, which is usually the",
+        "actual problem.",
+        "",
+        "---",
+        "",
+    ]
+    return "\n".join(out)
+
+
+def _config_diff() -> str:
+    payload = _call(
+        "diff_clusters",
+        {
+            "cluster_a": "clean-cluster",
+            "cluster_b": "drifted-cluster",
+            "scopes": ["memory", "jvm"],
+        },
+    )
+    out = [
+        "### It works on one cluster but not another",
+        "",
+        "**The user asks:**",
+        "",
+        "> Queries run fine on `clean-cluster` but keep failing on",
+        "> `drifted-cluster`. What is different?",
+        "",
+        "**The agent calls:**",
+        "",
+        "```python",
+        'diff_clusters(\n    cluster_a="clean-cluster",\n'
+        '    cluster_b="drifted-cluster",\n    scopes=["memory", "jvm"],\n)',
+        "```",
+        "",
+        "**The tool returns:**",
+        "",
+        "```",
+        f"differences: {len(payload['differences'])}",
+        "",
+        f"{'classification':13} {'property':34} clean-cluster -> drifted-cluster",
+    ]
+    for diff in payload["differences"]:
+        out.append(
+            f"{diff['classification']:13} {diff['key']:34} "
+            f"{diff['value_a']} -> {diff['value_b']}"
+        )
+    out += ["```", ""]
+    out += [
+        "Differences are classified so the real divergence leads. `unexpected`",
+        "means the two clusters disagree on something that normally matches --",
+        "start there. `expected` covers values that differ by design, such as",
+        "hostnames and node ids; mention them only if asked.",
+        "",
+        "Without that classification the result would be dominated by differences",
+        "nobody cares about.",
+        "",
+        "One limit worth stating to the user: this reports differences, not",
+        "correctness. A property can match on both clusters and be wrong on both.",
+        "Run `run_rules` against each to find that out.",
+        "",
+    ]
     return "\n".join(out)
 
 
@@ -313,54 +607,12 @@ def render() -> str:
         "",
     ]
 
-    payload = _call(
-        "run_rules",
-        {"cluster": "drifted-cluster", "scopes": ["memory", "node_identity"]},
-    )
-    out = [
-        "### Validating a cluster",
-        "",
-        "**The user asks:**",
-        "",
-        "> Is `drifted-cluster` set up correctly for memory?",
-        "",
-        "**The agent calls:**",
-        "",
-        "```python",
-        'run_rules(cluster="drifted-cluster", scopes=["memory", "node_identity"])',
-        "```",
-        "",
-        "**The tool returns:**",
-        "",
-        "```",
-        f"findings: {len(payload['findings'])}   "
-        f"coverage.complete: {payload['coverage']['complete']}",
-    ]
-    for finding in payload["findings"][:3]:
-        evidence = finding["evidence"][0]
-        out += [
-            "",
-            f"[{finding['severity'].upper()}]  {finding['rule_id']}  "
-            f"domain: {finding['domain']}  owner: {finding['owner']}",
-            _wrap(finding["summary"]),
-            f"  actual: {finding['actual']}",
-            f"  expected: {finding['expected']}",
-            f"  evidence: {evidence['role']}/{evidence['node']}/{evidence['file']} "
-            f"line {evidence['line']}",
-        ]
-        if finding.get("next_step"):
-            out.append(_wrap("-> " + finding["next_step"]))
-    out += [
-        "",
-        f"... and {len(payload['findings']) - 3} more",
-        "```",
-        "",
-        "Every finding cites a file, node, and line. That is what makes the answer",
-        "checkable rather than merely plausible, and it is why `SEP-NODE-001` can",
-        "name the one worker out of three that drifted.",
-        "",
-    ]
-    sections.append("\n".join(out))
+    sections.append(_config_inventory())
+    sections.append(_config_misconfigured())
+    sections.append(_config_healthy())
+    sections.append(_config_missing_settings())
+    sections.append(_config_drift())
+    sections.append(_config_diff())
 
     return "\n".join(sections).rstrip() + "\n"
 

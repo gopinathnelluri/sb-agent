@@ -21,9 +21,14 @@ precomputed at build time and shipped in the image.
 
 ## Repo layout
 
-    mcp-server/   this MCP server; contains no LLM (see below)
-    SPEC.md       design for the MCP server
-    CLAUDE.md     this file
+    mcp-server/       this MCP server; contains no LLM (see below)
+    SPEC.md           design for the MCP server
+    system-prompt.md  starting-point prompts for the agent that calls it
+    CLAUDE.md         this file
+
+`system-prompt.md` documents the *agent* side, which lives elsewhere. Keep it
+free of tool mechanics: what each tool does and what its fields mean belongs
+in the tool descriptions, where it stays accurate as the tools change.
 
 ## Layering inside `mcp-server/`
 

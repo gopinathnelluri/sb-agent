@@ -83,7 +83,10 @@ columns:
 # at all -- without it only the query-level detectors can run.
 payload:
   column: operator_summaries
-  format: json_array_of_strings
+  # VARCHAR holding JSON, confirmed against the fleet -- not a native array
+  # type, so it is read as text and parsed. Whether the array holds objects
+  # or JSON-encoded strings is still unknown; the loader will accept either.
+  format: json_text
 
 # Additional structured columns, read alongside the payload.
 extra_payloads:

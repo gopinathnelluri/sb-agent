@@ -17,29 +17,34 @@
 --    operator detail. Redact anything sensitive in `query` before sharing;
 --    the operator payload itself holds statistics, not data.
 -- ===========================================================================
+-- operator_summaries is a VARCHAR on this fleet, so it holds JSON as text
+-- rather than a native array. Read it as text -- this works whatever is
+-- inside, which is the point when the shape is what we are trying to learn.
+
 SELECT
     query_id,
-    typeof(operator_summaries)              AS payload_type,
-    cardinality(
-        CAST(operator_summaries AS ARRAY(VARCHAR))
-    )                                       AS operator_count,
-    -- First element only. Enough to see the field names and nesting.
-    substr(
-        CAST(operator_summaries AS ARRAY(VARCHAR))[1], 1, 4000
-    )                                       AS first_operator
+    length(operator_summaries)              AS payload_chars,
+    substr(operator_summaries, 1, 4000)     AS payload_head
 FROM <catalog>.<schema>.completed_queries
 WHERE operator_summaries IS NOT NULL
+  AND length(operator_summaries) > 100
   AND wall_time_ms > 30000
 ORDER BY end_time DESC
 LIMIT 1;
 
--- If the CAST above fails, operator_summaries is not an array of strings.
--- Fall back to this and tell me what comes out:
+-- Once the text confirms it is JSON, this says whether it is an array of
+-- objects or an array of JSON-encoded strings -- which changes how it is
+-- parsed. Skip it if the query above already makes that obvious.
 --
---   SELECT query_id, typeof(operator_summaries),
---          substr(CAST(operator_summaries AS VARCHAR), 1, 4000)
+--   SELECT query_id,
+--          json_array_length(json_parse(operator_summaries)) AS operators,
+--          substr(
+--              json_format(
+--                  json_array_get(json_parse(operator_summaries), 0)
+--              ), 1, 3000
+--          ) AS first_operator
 --   FROM <catalog>.<schema>.completed_queries
---   WHERE operator_summaries IS NOT NULL
+--   WHERE operator_summaries IS NOT NULL AND wall_time_ms > 30000
 --   ORDER BY end_time DESC LIMIT 1;
 
 -- ===========================================================================

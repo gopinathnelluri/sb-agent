@@ -49,13 +49,13 @@ analyze_query(cluster="prod-analytics", query_id="20260910_093412_00042_x7k2m")
 ```
 found: true   findings: 2   coverage.complete: False
 
-[HIGH]  owner: query_author  (root cause)
+[HIGH]  domain: data_access  owner: query_author  (root cause)
 Partition pruning was defeated by a function in the WHERE clause:
 YEAR(o.order_date) = 2026
 -> Compare the column to a date range instead of transforming it. A rewrite is
 included below and returns the same rows.
 
-[HIGH]  owner: query_author
+[HIGH]  domain: data_access  owner: query_author
 Scanned 4TB to return 6 row(s) -- 683GB read per row of output
 -> Check the WHERE clause. The usual cause is no filter on the table's
 partition column, or a filter that hides it inside a function -- write
@@ -124,7 +124,7 @@ analyze_query(cluster="prod-analytics", query_id="20260910_101500_00311_p4nq8")
 ```
 found: true   findings: 1   coverage.complete: False
 
-[HIGH]  owner: platform_team
+[HIGH]  domain: scheduling  owner: platform_team
 Query spent 14.1min of 15.0min waiting in the queue (94%); only 55.0s was
 actual execution
 -> No change to your SQL will help this one. If it keeps happening, ask your
@@ -243,7 +243,7 @@ run_rules(cluster="drifted-cluster", scopes=["memory", "node_identity"])
 ```
 findings: 6   coverage.complete: False
 
-[HIGH]  SEP-MEM-002  owner: platform_team
+[HIGH]  SEP-MEM-002  domain: memory  owner: platform_team
 query.max-memory-per-node on coordinator is 40GB, expected <= 24GB (0.3 x JVM
 heap (-Xmx))
   actual: 40GB
@@ -252,7 +252,7 @@ heap (-Xmx))
 -> Lower query.max-memory-per-node to at or below 30% of the JVM heap, or
 raise -Xmx if the node has spare RAM.
 
-[HIGH]  SEP-MEM-002  owner: platform_team
+[HIGH]  SEP-MEM-002  domain: memory  owner: platform_team
 query.max-memory-per-node on worker is 40GB, expected <= 24GB (0.3 x JVM heap
 (-Xmx))
   actual: 40GB
@@ -261,7 +261,7 @@ query.max-memory-per-node on worker is 40GB, expected <= 24GB (0.3 x JVM heap
 -> Lower query.max-memory-per-node to at or below 30% of the JVM heap, or
 raise -Xmx if the node has spare RAM.
 
-[HIGH]  SEP-NODE-001  owner: platform_team
+[HIGH]  SEP-NODE-001  domain: node_identity  owner: platform_team
 node.environment differs across nodes in the same role
   actual: worker-02=prod
   expected: all 3 worker node(s) set node.environment=production

@@ -125,7 +125,8 @@ def _wrap(text: str, indent: str = "", hanging: str | None = None) -> str:
 
 def _finding_block(finding: dict[str, Any]) -> list[str]:
     lines = [
-        f"[{finding['severity'].upper()}]  owner: {finding['owner']}"
+        f"[{finding['severity'].upper()}]  domain: {finding['domain']}  "
+        f"owner: {finding['owner']}"
         f"{'  (root cause)' if finding.get('is_root_cause') else ''}",
         _wrap(finding["summary"]),
     ]
@@ -340,7 +341,7 @@ def render() -> str:
         out += [
             "",
             f"[{finding['severity'].upper()}]  {finding['rule_id']}  "
-            f"owner: {finding['owner']}",
+            f"domain: {finding['domain']}  owner: {finding['owner']}",
             _wrap(finding["summary"]),
             f"  actual: {finding['actual']}",
             f"  expected: {finding['expected']}",

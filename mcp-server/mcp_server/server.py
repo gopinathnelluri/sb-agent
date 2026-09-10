@@ -41,6 +41,53 @@ R = TypeVar("R")
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False)
 
+_SHARED_CONTRACT = """
+These tools contain no model and make no judgement calls: identical input \
+always yields identical output, and every finding cites the evidence it rests \
+on -- a file and line, or a query id and metric. An empty findings list means \
+nothing was found, which is a real answer; check `coverage.complete` before \
+reporting an all clear, because silence from a check that could not run looks \
+the same as silence from a healthy one. Write the prose yourself; these tools \
+supply the facts.
+""".replace("\\\n", "").strip()
+
+_CONFIG_USE_CASE = """
+Config auditing -- `list_clusters`, `get_config_summary`, `run_rules`, \
+`get_config_detail`, `diff_clusters`. Answers "is this cluster configured \
+correctly". Reads config backups and evaluates a versioned rule catalog \
+against the scopes you name.
+""".replace("\\\n", "").strip()
+
+_QUERY_USE_CASE = """
+Query analysis -- `analyze_query`, `get_query_info`. Answers "why was this \
+query slow". Reads recorded statistics for one completed query and correlates \
+them with its SQL text.
+""".replace("\\\n", "").strip()
+
+_SEPARATION_NOTE = """
+These are two separate use cases with different inputs and different answer \
+shapes. Findings from them are not interchangeable: a config finding \
+describes a cluster's settings, a query finding describes one execution.
+""".replace("\\\n", "").strip()
+
+
+def _instructions(*, query_analysis: bool) -> str:
+    """Describe what this server actually serves.
+
+    Built from what is registered rather than written once, so a deployment
+    without cluster credentials does not advertise query analysis it cannot
+    perform -- and so the text cannot go stale when a use case is added.
+    """
+    parts = [
+        "Starburst/Trino operations tools.",
+        _CONFIG_USE_CASE,
+    ]
+    if query_analysis:
+        parts += [_QUERY_USE_CASE, _SEPARATION_NOTE]
+    parts.append(_SHARED_CONTRACT)
+    return "\n\n".join(parts)
+
+
 _EMPTY_FINDINGS_CONTRACT = """
 An empty `findings` list means no rule fired: nothing is wrong within the
 scopes you asked for. It is a real answer, not a failure, and you should
@@ -101,14 +148,7 @@ def build_server(
     server = MCPServer(
         name=name,
         version="0.1.0",
-        instructions=(
-            "Deterministic Starburst/Trino configuration validation. These "
-            "tools read config backups and evaluate a versioned rule catalog. "
-            "They contain no model and make no judgement calls: identical "
-            "input always yields identical findings, every finding cites a "
-            "file and line, and an empty findings list means no issues were "
-            "found. Write the prose yourself; these tools supply the facts."
-        ),
+        instructions=_instructions(query_analysis=query_service is not None),
     )
 
     @server.tool(annotations=READ_ONLY)

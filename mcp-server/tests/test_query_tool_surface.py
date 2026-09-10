@@ -125,3 +125,47 @@ def test_server_without_query_service_omits_the_tools() -> None:
     }
     assert not (EXPECTED_QUERY_TOOLS & names)
     assert "run_rules" in names
+
+
+class TestServerInstructions:
+    """The instructions are the server's own prompt surface.
+
+    A client shows them to its model at connection time, so they must
+    describe what this deployment actually serves -- not what the server
+    served when the string was first written.
+    """
+
+    def _instructions(self, *, query_analysis: bool) -> str:
+        from core.analysis.service import QueryAnalysisService
+        from mcp_server.server import build_server
+
+        service = (
+            QueryAnalysisService(FakeQueryRepository()) if query_analysis else None
+        )
+        return build_server(FakeConfigService(), service).instructions or ""
+
+    def test_names_every_registered_tool(self) -> None:
+        """The failure this guards: adding a use case and forgetting the text."""
+        instructions = self._instructions(query_analysis=True)
+        for tool in asyncio.run(_server().list_tools()):
+            assert f"`{tool.name}`" in instructions, tool.name
+
+    def test_describes_both_use_cases_when_both_are_served(self) -> None:
+        instructions = self._instructions(query_analysis=True)
+        assert "Config auditing" in instructions
+        assert "Query analysis" in instructions
+        assert "two separate use cases" in instructions
+
+    def test_omits_query_analysis_when_it_is_not_served(self) -> None:
+        """A deployment without cluster credentials must not advertise it."""
+        instructions = self._instructions(query_analysis=False)
+        assert "Config auditing" in instructions
+        assert "analyze_query" not in instructions
+
+    def test_states_the_no_model_contract(self) -> None:
+        instructions = self._instructions(query_analysis=True)
+        assert "no model" in instructions
+        assert "identical input always yields identical output" in instructions
+
+    def test_states_the_empty_findings_contract(self) -> None:
+        assert "coverage.complete" in self._instructions(query_analysis=True)

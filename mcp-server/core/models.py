@@ -109,15 +109,21 @@ class QueryDomain(StrEnum):
 class Owner(StrEnum):
     """Who can actually act on a finding.
 
-    Severity says how bad; this says whose problem it is. An analyst reading
-    two high-severity findings needs to know which one they can fix in their
-    SQL and which one belongs to whoever runs the cluster -- without it, the
+    Severity says how bad; this says whose problem it is. Someone reading two
+    high-severity findings needs to know which one they can fix in their SQL
+    and which one needs whoever administers the cluster -- without it, the
     only safe reading is "everything is my fault", which is wrong and wastes
     their time.
+
+    ``CLUSTER_OWNER`` names a role, not an org chart. Where teams run their
+    own clusters that person is usually a colleague, sometimes the reader
+    themselves; elsewhere it is a central platform group. Naming the role
+    stays accurate either way, where "platform team" would misdirect anyone
+    whose own team owns the cluster.
     """
 
     QUERY_AUTHOR = "query_author"
-    PLATFORM_TEAM = "platform_team"
+    CLUSTER_OWNER = "cluster_owner"
     DATA_OWNER = "data_owner"
 
 
@@ -204,7 +210,7 @@ class Finding:
     expected: str | None = None
     deviation: float | None = None
     doc_ref: DocRef | None = None
-    owner: Owner = Owner.PLATFORM_TEAM
+    owner: Owner = Owner.CLUSTER_OWNER
     next_step: str | None = None
     is_root_cause: bool = False
 

@@ -80,7 +80,7 @@ def test_analyze_query_documents_the_owner_field() -> None:
     """The model must know that owner tells the user whose problem it is."""
     description = " ".join((_tools()["analyze_query"].description or "").split())
     assert "query_author" in description
-    assert "platform_team" in description
+    assert "cluster_owner" in description
 
 
 def test_analyze_query_documents_the_equivalence_contract() -> None:

@@ -53,7 +53,13 @@ If you find yourself adding an `if framework ==` branch or importing
                       reads query history; findings carry a QueryDomain
 
 They share the *shape* of a finding — severity, owner, evidence, coverage —
-and nothing else. Do not tag a query finding with a config `Scope`: it would
+and nothing else.
+
+Users are application-team members who query the cluster their own team owns.
+A finding they cannot act on goes to `cluster_owner` — a role, not an org
+chart, and often a colleague. Never write "platform team": it sends someone
+looking outside a team that already contains the person who can help.
+ Do not tag a query finding with a config `Scope`: it would
 claim a slow query is a fact about `catalog/*.properties`. A test asserts the
 taxonomies stay apart, and mypy proves they cannot overlap.
 

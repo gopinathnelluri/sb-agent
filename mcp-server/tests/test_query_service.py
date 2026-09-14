@@ -173,12 +173,12 @@ class TestService:
 
 
 class TestOwnerSplit:
-    def test_queueing_is_attributed_to_the_platform(self) -> None:
-        """An analyst must be able to tell their problem from the platform's."""
+    def test_queueing_is_attributed_to_the_cluster_owner(self) -> None:
+        """A user must be able to tell their problem from the cluster's."""
         query = _slow_query(elapsed_ms=700_000, queued_ms=600_000)
         result = _service(query).analyze_query("prod", "20260909_00042")
         queue = next(f for f in result.findings if f.rule_id == "QRY-QUEUE-001")
-        assert queue.owner is Owner.PLATFORM_TEAM
+        assert queue.owner is Owner.CLUSTER_OWNER
 
     def test_query_problems_are_attributed_to_the_author(self) -> None:
         query = _slow_query(elapsed_ms=700_000, queued_ms=5_000)

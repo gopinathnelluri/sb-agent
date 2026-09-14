@@ -80,12 +80,13 @@ class QueueDominatedDetector:
                 rationale_source=RationaleSource.RULE_CATALOG,
                 evidence=list(evidence),
                 subject=query.query_id,
-                owner=Owner.PLATFORM_TEAM,
+                owner=Owner.CLUSTER_OWNER,
                 next_step=(
-                    "No change to your SQL will help this one. If it keeps "
-                    "happening, ask your platform team whether the cluster is "
-                    "under-provisioned or your queries are landing in a "
-                    "resource group with a low concurrency limit."
+                    "No change to your SQL will help this one -- the query was "
+                    "waiting for cluster capacity. If it keeps happening, raise "
+                    "it with whoever owns this cluster: either it is "
+                    "under-provisioned for the workload, or these queries are "
+                    "landing in a resource group with a low concurrency limit."
                 ),
                 actual=f"{fraction:.0%} queued",
                 expected=f"< {thresholds.queued_fraction:.0%} queued",

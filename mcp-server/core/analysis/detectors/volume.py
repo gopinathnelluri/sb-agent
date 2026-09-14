@@ -63,8 +63,9 @@ class SpillDetector:
                 next_step=(
                     "Try reducing how much data the query holds in memory at "
                     "once: filter earlier, select fewer columns, or aggregate "
-                    "before joining rather than after. If the query genuinely "
-                    "needs this much memory, raise it with your platform team."
+                    "before joining rather than after. If it genuinely needs "
+                    "this much memory, the per-node limit is a cluster setting "
+                    "-- raise it with whoever owns the cluster."
                 ),
                 actual=_bytes(spilled),
                 expected="no spill",

@@ -47,12 +47,12 @@ class TestQueueDominated:
         assert len(findings) == 1
         assert findings[0].severity is Severity.HIGH
 
-    def test_blames_the_platform_not_the_author(self) -> None:
+    def test_blames_the_cluster_not_the_author(self) -> None:
         """The whole point: do not tell the user to rewrite a query that waited."""
         finding = QueueDominatedDetector().detect(
             _query(elapsed_ms=600_000, queued_ms=540_000), Thresholds()
         )[0]
-        assert finding.owner is Owner.PLATFORM_TEAM
+        assert finding.owner is Owner.CLUSTER_OWNER
         assert finding.next_step is not None
         assert "No change to your SQL" in finding.next_step
 

@@ -124,11 +124,12 @@ analyze_query(cluster="prod-analytics", query_id="20260910_101500_00311_p4nq8")
 ```
 found: true   findings: 1   coverage.complete: False
 
-[HIGH]  domain: scheduling  owner: platform_team
+[HIGH]  domain: scheduling  owner: cluster_owner
 Query spent 14.1min of 15.0min waiting in the queue (94%); only 55.0s was
 actual execution
--> No change to your SQL will help this one. If it keeps happening, ask your
-platform team whether the cluster is under-provisioned or your queries are
+-> No change to your SQL will help this one -- the query was waiting for
+cluster capacity. If it keeps happening, raise it with whoever owns this
+cluster: either it is under-provisioned for the workload, or these queries are
 landing in a resource group with a low concurrency limit.
 
 coverage.blind_spots:
@@ -143,12 +144,18 @@ coverage.blind_spots:
 
 > No -- and this one isn't yours. The query spent 14.1 of 15 minutes
 > waiting in the queue; actual execution was 55 seconds. Nothing in your
-> SQL will change that. If it keeps happening, ask your platform team
-> whether the cluster is under-provisioned.
+> SQL will change that. If it keeps happening, worth raising with
+> whoever owns this cluster -- it may be under-provisioned for the
+> workload.
 
 This is why findings carry `owner`. A large share of "slow query"
-reports are queueing, and an analyst who cannot tell their problem from
-the platform's will optimise a query that was already fine.
+reports are queueing, and someone who cannot tell their problem from
+the cluster's will optimise a query that was already fine.
+
+Note the phrasing: `cluster_owner`, not `platform_team`. Where a team
+runs its own cluster the person who can fix this is a colleague --
+possibly the reader. Telling them to escalate to a platform team sends
+them looking outside their own team for someone already in it.
 
 ---
 
@@ -280,7 +287,7 @@ run_rules(
 ```
 findings: 9   coverage.complete: True   rules_evaluated: 24
 
-[HIGH]  SEP-MEM-002  domain: memory  owner: platform_team
+[HIGH]  SEP-MEM-002  domain: memory  owner: cluster_owner
 query.max-memory-per-node on coordinator is 40GB, expected <= 24GB (0.3 x JVM
 heap (-Xmx))
   actual:   40GB
@@ -289,7 +296,7 @@ heap (-Xmx))
 -> Lower query.max-memory-per-node to at or below 30% of the JVM heap, or
 raise -Xmx if the node has spare RAM.
 
-[HIGH]  SEP-MEM-002  domain: memory  owner: platform_team
+[HIGH]  SEP-MEM-002  domain: memory  owner: cluster_owner
 query.max-memory-per-node on worker is 40GB, expected <= 24GB (0.3 x JVM heap
 (-Xmx))
   actual:   40GB
@@ -298,7 +305,7 @@ query.max-memory-per-node on worker is 40GB, expected <= 24GB (0.3 x JVM heap
 -> Lower query.max-memory-per-node to at or below 30% of the JVM heap, or
 raise -Xmx if the node has spare RAM.
 
-[HIGH]  SEP-NODE-001  domain: node_identity  owner: platform_team
+[HIGH]  SEP-NODE-001  domain: node_identity  owner: cluster_owner
 node.environment differs across nodes in the same role
   actual:   worker-02.corp.com=prod
   expected: all 3 worker node(s) set node.environment=production
@@ -306,7 +313,7 @@ node.environment differs across nodes in the same role
 -> Set node.environment to the same value on every node in the role. A node
 that differs never joins the cluster.
 
-[HIGH]  SEP-JVM-002  domain: jvm  owner: platform_team
+[HIGH]  SEP-JVM-002  domain: jvm  owner: cluster_owner
 -XX:ExitOnOutOfMemoryError is not set on coordinator
   actual:   not set
   expected: = true
@@ -378,7 +385,7 @@ run_rules(
 ```
 findings: 6   coverage.complete: False   rules_evaluated: 8
 
-[CRITICAL]  SEP-JVM-001  domain: jvm  owner: platform_team
+[CRITICAL]  SEP-JVM-001  domain: jvm  owner: cluster_owner
 maximum JVM heap is not set
   actual:   not set
   expected: must be set
@@ -386,7 +393,7 @@ maximum JVM heap is not set
 -> Add an explicit -Xmx to jvm.config sized to the pod's memory limit. Without
 it the JVM guesses, and under OpenShift it usually guesses wrong.
 
-[HIGH]  SEP-JVM-002  domain: jvm  owner: platform_team
+[HIGH]  SEP-JVM-002  domain: jvm  owner: cluster_owner
 -XX:ExitOnOutOfMemoryError is not set on coordinator
   actual:   not set
   expected: = true
@@ -394,7 +401,7 @@ it the JVM guesses, and under OpenShift it usually guesses wrong.
 -> Add -XX:+ExitOnOutOfMemoryError to jvm.config so the orchestrator can
 restart a node cleanly instead of leaving a half-dead one in the cluster.
 
-[HIGH]  SEP-MEM-001  domain: memory  owner: platform_team
+[HIGH]  SEP-MEM-001  domain: memory  owner: cluster_owner
 query.max-memory-per-node is not set
   actual:   not set
   expected: must be set
@@ -442,7 +449,7 @@ run_rules(
 ```
 findings: 2   coverage.complete: True   rules_evaluated: 3
 
-[CRITICAL]  SEP-SEC-002  domain: file_security  owner: platform_team
+[CRITICAL]  SEP-SEC-002  domain: file_security  owner: cluster_owner
 hive.keytab on hms-01.corp.com is 0644 (contents not backed up; permissions
 recorded from the host)
   actual:   0644
@@ -451,7 +458,7 @@ recorded from the host)
 -> chmod 600 the keytab immediately and confirm its owner. If it has been
 readable more widely, treat the principal as compromised and rotate it.
 
-[HIGH]  SEP-SEC-001  domain: file_security  owner: platform_team
+[HIGH]  SEP-SEC-001  domain: file_security  owner: cluster_owner
 config.properties on coord-01.corp.com is 0644
   actual:   0644
   expected: not readable by other users

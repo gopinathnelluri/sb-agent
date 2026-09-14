@@ -68,25 +68,26 @@ class QueueDominatedDetector:
                 severity=Severity.HIGH,
                 domain=QueryDomain.SCHEDULING,
                 summary=(
-                    f"Query spent {_ms(queued)} of {_ms(elapsed)} waiting in the "
-                    f"queue ({fraction:.0%}); only {_ms(running)} was actual execution"
+                    f"This query waited {_ms(queued)} before it started running. "
+                    f"The work itself took only {_ms(running)}, so almost all of "
+                    f"the {_ms(elapsed)} you waited was queueing, not the query."
                 ),
                 rationale=(
-                    "The query was not slow -- it was waiting for cluster capacity. "
-                    "Rewriting the SQL will not help. Look at concurrency limits, "
-                    "resource group configuration, or what else was running at the "
-                    "time."
+                    "A query queues when the cluster has no free capacity to start "
+                    "it, usually because other queries are already using what "
+                    "there is. The SQL itself performed normally once it got "
+                    "going, so changing it would not shorten the wait."
                 ),
                 rationale_source=RationaleSource.RULE_CATALOG,
                 evidence=list(evidence),
                 subject=query.query_id,
                 owner=Owner.CLUSTER_OWNER,
                 next_step=(
-                    "No change to your SQL will help this one -- the query was "
-                    "waiting for cluster capacity. If it keeps happening, raise "
-                    "it with whoever owns this cluster: either it is "
-                    "under-provisioned for the workload, or these queries are "
-                    "landing in a resource group with a low concurrency limit."
+                    "There is nothing to fix in your SQL. If this keeps "
+                    "happening, it is worth raising with your cluster "
+                    "administrator: the cluster may need more capacity for this "
+                    "workload, or your queries may be running under a resource "
+                    "group that limits how many can run at once."
                 ),
                 actual=f"{fraction:.0%} queued",
                 expected=f"< {thresholds.queued_fraction:.0%} queued",
@@ -124,19 +125,24 @@ class QueryFailedDetector:
                 ),
                 severity=Severity.HIGH,
                 domain=QueryDomain.EXECUTION,
-                summary=f"Query failed with {query.error_code or 'an unknown error'}",
+                summary=(
+                    f"This query did not finish. It failed with "
+                    f"{query.error_code or 'an error the history did not record'}."
+                ),
                 rationale=(
-                    "The query did not complete, so its runtime statistics describe "
-                    "a partial execution. Resolve the failure before drawing "
-                    f"performance conclusions{detail}"
+                    "Because the query stopped early, its timing and data-volume "
+                    "figures describe only the part that ran. They are not a fair "
+                    "picture of how it would perform if it completed"
+                    f"{detail}"
                 ),
                 rationale_source=RationaleSource.RULE_CATALOG,
                 evidence=list(evidence),
                 subject=query.query_id,
                 owner=Owner.QUERY_AUTHOR,
                 next_step=(
-                    "Read the error message above and fix the query, then re-run "
-                    "it. Performance numbers from a failed run are not meaningful."
+                    "Fix the cause of the failure and run the query again. It is "
+                    "worth doing that before looking at performance, since the "
+                    "numbers from a run that stopped early are not comparable."
                 ),
                 actual=query.error_code or "failed",
                 expected="finished",

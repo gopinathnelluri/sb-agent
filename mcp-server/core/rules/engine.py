@@ -162,10 +162,16 @@ def _evaluate_metadata_rule(
             evidence: list[Evidence] = [
                 ConfigEvidence(file=path, role=role, node=node.node)
             ]
+            # Files too sensitive to back up still have their permissions
+            # recorded, which is the whole point -- but say so, or a reader
+            # will wonder how we looked at a keytab.
             note = (
                 ""
                 if metadata.content_backed_up
-                else " (contents not backed up; permissions recorded from the host)"
+                else (
+                    ". Its contents are not in the backup -- only the "
+                    "permissions were recorded from the host"
+                )
             )
             findings.append(
                 Finding(
@@ -177,7 +183,7 @@ def _evaluate_metadata_rule(
                     domain=rule.domain,
                     summary=(
                         f"{path.rsplit('/', 1)[-1]} on {node.label} is "
-                        f"{outcome.actual}{note}"
+                        f"{_permissions_in_words(outcome.actual)}{note}."
                     ),
                     rationale=rule.rationale,
                     rationale_source=RationaleSource.RULE_CATALOG,
@@ -272,7 +278,10 @@ def _handle_absent(
             actual="not set",
             expected=rule.check.describe(),
             deviation=None,
-            summary=rule.summary or f"{rule.property} is not set on {role.value}",
+            summary=(
+                rule.summary
+                or f"The {rule.subject_name()} is not configured on the {role.value}."
+            ),
         )
     )
 
@@ -286,10 +295,42 @@ def _expected_file(rule: PropertyRule, snapshot: ClusterSnapshot, role: Role) ->
     return files[0] if files else f"{role.value}/config.properties"
 
 
+def _permissions_in_words(mode: str) -> str:
+    """Describe a unix mode the way a reader would say it.
+
+    "0644" is precise and means nothing to someone who does not administer
+    hosts. Saying who can read and write it does, and the octal stays in the
+    finding's `actual` field for whoever needs it.
+    """
+    try:
+        bits = int(mode, 8)
+    except ValueError:
+        return f"set to {mode}"
+
+    who = []
+    if bits & 0o004:
+        who.append("readable by every account on the host")
+    elif bits & 0o040:
+        who.append("readable by its group")
+    else:
+        who.append("readable only by its owner")
+    if bits & 0o002:
+        who.append("writable by every account")
+    elif bits & 0o020:
+        who.append("writable by its group")
+    return f"{' and '.join(who)} (mode {mode})"
+
+
 def _headline(rule: PropertyRule, role: Role, outcome: CheckOutcome) -> str:
+    """A sentence a reader can act on without knowing the config key.
+
+    Leads with what the setting does, gives the value found and the value
+    wanted in the same breath, and carries the key at the end for whoever has
+    to go and change it.
+    """
     return (
-        f"{rule.property} on {role.value} is {outcome.actual}, "
-        f"expected {outcome.expected}"
+        f"The {rule.subject_name()} on the {role.value} is set to "
+        f"{outcome.actual}, which is {outcome.expected}."
     )
 
 

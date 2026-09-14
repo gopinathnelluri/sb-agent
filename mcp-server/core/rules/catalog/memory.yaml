@@ -6,8 +6,11 @@
 
 - id: SEP-MEM-001
   domain: memory
+  label: "per-query memory limit"
   property: query.max-memory-per-node
-  summary: query.max-memory-per-node is not set
+  summary: >-
+    No per-query memory limit is set, so one large query can use up a
+    node’s memory
   check:
     kind: required
   on_missing: fail
@@ -28,6 +31,7 @@
 
 - id: SEP-MEM-002
   domain: memory
+  label: "per-query memory limit"
   property: query.max-memory-per-node
   check:
     kind: max_ratio
@@ -52,6 +56,7 @@
 
 - id: SEP-MEM-003
   domain: memory
+  label: "memory reserved for the engine's own use"
   property: memory.heap-headroom-per-node
   check:
     kind: min_ratio
@@ -74,6 +79,7 @@
 
 - id: SEP-MEM-004
   domain: memory
+  label: "memory reserved for the engine's own use"
   property: memory.heap-headroom-per-node
   check:
     kind: max_ratio
@@ -92,8 +98,11 @@
 
 - id: SEP-MEM-005
   domain: memory
+  label: "cluster-wide memory limit for a single query"
   property: query.max-memory
-  summary: cluster-wide query memory limit is not set
+  summary: >-
+    No cluster-wide memory limit is set, so a single query can consume the
+    whole cluster’s memory
   check:
     kind: required
   on_missing: fail

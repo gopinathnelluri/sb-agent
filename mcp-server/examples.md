@@ -50,17 +50,20 @@ analyze_query(cluster="prod-analytics", query_id="20260910_093412_00042_x7k2m")
 found: true   findings: 2   coverage.complete: False
 
 [HIGH]  domain: data_access  owner: query_author  (root cause)
-Partition pruning was defeated by a function in the WHERE clause:
-YEAR(o.order_date) = 2026
--> Compare the column to a date range instead of transforming it. A rewrite is
-included below and returns the same rows.
+Starburst had to read the whole table because of how the WHERE clause is
+written: YEAR(o.order_date) = 2026
+-> Compare the column directly to a date range instead of putting it inside a
+function. A rewritten version of your query is included below; it returns
+exactly the same rows.
 
 [HIGH]  domain: data_access  owner: query_author
-Scanned 4TB to return 6 row(s) -- 683GB per output row
--> Check the WHERE clause. The usual cause is no filter on the table's
-partition column, or a filter that hides it inside a function -- write
-date_col >= DATE '2026-01-01' rather than year(date_col) = 2026, so the engine
-can skip partitions instead of reading them all.
+This query read 4TB of data to produce 6 rows. That is far more than a result
+of this size should need.
+-> Check the WHERE clause. Either there is no filter on the column the table
+is partitioned by, or the filter wraps that column in a function, which stops
+Starburst using it. Comparing the column directly to a date range --
+event_date >= DATE '2026-01-01' rather than year(event_date) = 2026 -- lets it
+skip the partitions it does not need.
 
 suggested_sql:
 
@@ -125,12 +128,12 @@ analyze_query(cluster="prod-analytics", query_id="20260910_101500_00311_p4nq8")
 found: true   findings: 1   coverage.complete: False
 
 [HIGH]  domain: scheduling  owner: cluster_owner
-Query spent 14.1min of 15.0min waiting in the queue (94%); only 55.0s was
-actual execution
--> No change to your SQL will help this one -- the query was waiting for
-cluster capacity. If it keeps happening, raise it with whoever owns this
-cluster: either it is under-provisioned for the workload, or these queries are
-landing in a resource group with a low concurrency limit.
+This query waited 14.1min before it started running. The work itself took only
+55.0s, so almost all of the 15.0min you waited was queueing, not the query.
+-> There is nothing to fix in your SQL. If this keeps happening, it is worth
+raising with your cluster administrator: the cluster may need more capacity
+for this workload, or your queries may be running under a resource group that
+limits how many can run at once.
 
 coverage.blind_spots:
   - QRY-SPILL-001 skipped: source did not provide spilled_bytes
@@ -288,25 +291,26 @@ run_rules(
 findings: 9   coverage.complete: True   rules_evaluated: 24
 
 [HIGH]  SEP-MEM-002  domain: memory  owner: cluster_owner
-query.max-memory-per-node on coordinator is 40GB, expected <= 24GB (0.3 x JVM
-heap (-Xmx))
+The per-query memory limit on the coordinator is set to 40GB, which is higher
+than the recommended 24GB (30% of the Java heap).
   actual:   40GB
-  expected: <= 24GB (0.3 x JVM heap (-Xmx))
+  expected: higher than the recommended 24GB (30% of the Java heap)
   evidence: coordinator/coord-01.corp.com/etc/starburst/config.properties line 6
 -> Lower query.max-memory-per-node to at or below 30% of the JVM heap, or
 raise -Xmx if the node has spare RAM.
 
 [HIGH]  SEP-MEM-002  domain: memory  owner: cluster_owner
-query.max-memory-per-node on worker is 40GB, expected <= 24GB (0.3 x JVM heap
-(-Xmx))
+The per-query memory limit on the worker is set to 40GB, which is higher than
+the recommended 24GB (30% of the Java heap).
   actual:   40GB
-  expected: <= 24GB (0.3 x JVM heap (-Xmx))
+  expected: higher than the recommended 24GB (30% of the Java heap)
   evidence: worker/worker-01.corp.com/etc/starburst/config.properties line 6
 -> Lower query.max-memory-per-node to at or below 30% of the JVM heap, or
 raise -Xmx if the node has spare RAM.
 
 [HIGH]  SEP-NODE-001  domain: node_identity  owner: cluster_owner
-node.environment differs across nodes in the same role
+Some nodes report a different cluster name from the rest, so they will not
+join the cluster
   actual:   worker-02.corp.com=prod
   expected: all 3 worker node(s) set node.environment=production
   evidence: worker/worker-02.corp.com/etc/starburst/node.properties line 1
@@ -314,9 +318,10 @@ node.environment differs across nodes in the same role
 that differs never joins the cluster.
 
 [HIGH]  SEP-JVM-002  domain: jvm  owner: cluster_owner
--XX:ExitOnOutOfMemoryError is not set on coordinator
+The safeguard that shuts a node down if it runs out of memory is not
+configured on the coordinator.
   actual:   not set
-  expected: = true
+  expected: not the recommended value (true)
   evidence: coordinator/etc/starburst/config.properties
 -> Add -XX:+ExitOnOutOfMemoryError to jvm.config so the orchestrator can
 restart a node cleanly instead of leaving a half-dead one in the cluster.
@@ -386,25 +391,28 @@ run_rules(
 findings: 6   coverage.complete: False   rules_evaluated: 8
 
 [CRITICAL]  SEP-JVM-001  domain: jvm  owner: cluster_owner
-maximum JVM heap is not set
+No maximum Java heap size is set, so each node guesses how much memory it may
+use
   actual:   not set
-  expected: must be set
+  expected: required but not configured
   evidence: coordinator/etc/starburst/config.properties
 -> Add an explicit -Xmx to jvm.config sized to the pod's memory limit. Without
 it the JVM guesses, and under OpenShift it usually guesses wrong.
 
 [HIGH]  SEP-JVM-002  domain: jvm  owner: cluster_owner
--XX:ExitOnOutOfMemoryError is not set on coordinator
+The safeguard that shuts a node down if it runs out of memory is not
+configured on the coordinator.
   actual:   not set
-  expected: = true
+  expected: not the recommended value (true)
   evidence: coordinator/etc/starburst/config.properties
 -> Add -XX:+ExitOnOutOfMemoryError to jvm.config so the orchestrator can
 restart a node cleanly instead of leaving a half-dead one in the cluster.
 
 [HIGH]  SEP-MEM-001  domain: memory  owner: cluster_owner
-query.max-memory-per-node is not set
+No per-query memory limit is set, so one large query can use up a node’s
+memory
   actual:   not set
-  expected: must be set
+  expected: required but not configured
   evidence: coordinator/etc/starburst/config.properties
 -> Set query.max-memory-per-node in config.properties, sized to roughly 30% of
 the JVM heap, then restart the affected nodes.
@@ -450,8 +458,9 @@ run_rules(
 findings: 2   coverage.complete: True   rules_evaluated: 3
 
 [CRITICAL]  SEP-SEC-002  domain: file_security  owner: cluster_owner
-hive.keytab on hms-01.corp.com is 0644 (contents not backed up; permissions
-recorded from the host)
+hive.keytab on hms-01.corp.com is readable by every account on the host (mode
+0644). Its contents are not in the backup -- only the permissions were
+recorded from the host.
   actual:   0644
   expected: no permissions beyond 0600
   evidence: hms/hms-01.corp.com/opt/sbhms/conf/hive.keytab
@@ -459,7 +468,8 @@ recorded from the host)
 readable more widely, treat the principal as compromised and rotate it.
 
 [HIGH]  SEP-SEC-001  domain: file_security  owner: cluster_owner
-config.properties on coord-01.corp.com is 0644
+config.properties on coord-01.corp.com is readable by every account on the
+host (mode 0644).
   actual:   0644
   expected: not readable by other users
   evidence: coordinator/coord-01.corp.com/etc/starburst/config.properties

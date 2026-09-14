@@ -53,13 +53,13 @@ def function_on_filter_column(
                     continue
                 hits_partition = bool(set(columns) & partition_cols)
                 detail = (
-                    f"'{columns[0]}' is a partition column, so wrapping it in "
-                    f"{side.key.upper()}() forces every partition to be read"
+                    f"here the column is '{columns[0]}' and the function is "
+                    f"{side.key.upper()}()"
                     if hits_partition
                     else (
-                        f"wrapping '{columns[0]}' in {side.key.upper()}() prevents "
-                        "the engine from using column statistics or partition "
-                        "metadata to skip data"
+                        f"'{columns[0]}' is wrapped in {side.key.upper()}(), which "
+                        f"may be preventing Starburst from skipping data -- worth "
+                        f"checking whether the table is partitioned by it"
                     )
                 )
                 found.append(

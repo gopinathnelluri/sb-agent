@@ -11,7 +11,10 @@
 
 - id: SEP-SEC-001
   domain: file_security
-  summary: config file is readable by every user on the host
+  label: "config file permissions"
+  summary: >-
+    A config file can be read by every account on the host, not just the
+    Starburst service account
   file_check:
     kind: not_world_readable
     files: "*.properties"
@@ -29,7 +32,10 @@
 
 - id: SEP-SEC-002
   domain: file_security
-  summary: keytab is readable beyond its owner
+  label: "keytab file permissions"
+  summary: >-
+    A Kerberos keytab can be read by accounts other than its owner, which
+    means anyone on the host can authenticate as it
   file_check:
     kind: max_mode
     files: "*.keytab"
@@ -47,7 +53,10 @@
 
 - id: SEP-SEC-003
   domain: file_security
-  summary: config file is group-writable
+  label: "config file permissions"
+  summary: >-
+    A config file can be edited by anyone in its group, so cluster settings
+    can be changed without root access
   file_check:
     kind: not_group_writable
     files: "*.properties"

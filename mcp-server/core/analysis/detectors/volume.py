@@ -49,23 +49,28 @@ class SpillDetector:
                 ),
                 severity=Severity.MEDIUM,
                 domain=QueryDomain.MEMORY,
-                summary=f"Query spilled {_bytes(spilled)} to disk",
+                summary=(
+                    f"This query ran out of memory and wrote {_bytes(spilled)} "
+                    f"to disk to keep going, which is much slower than working "
+                    f"in memory."
+                ),
                 rationale=(
-                    "Spilling means the query exceeded available memory and fell "
-                    "back to disk, which is far slower. Either the query processes "
-                    "more data than it needs to, or the per-node memory limits are "
-                    "too low for this workload."
+                    "Starburst holds intermediate results in memory. When a query "
+                    "needs more than it is allowed, it writes the overflow to disk "
+                    "and carries on -- correct, but far slower. Either the query "
+                    "is handling more data than it needs to, or the memory limit "
+                    "is too low for this kind of work."
                 ),
                 rationale_source=RationaleSource.RULE_CATALOG,
                 evidence=list(evidence),
                 subject=query.query_id,
                 owner=Owner.QUERY_AUTHOR,
                 next_step=(
-                    "Try reducing how much data the query holds in memory at "
-                    "once: filter earlier, select fewer columns, or aggregate "
-                    "before joining rather than after. If it genuinely needs "
-                    "this much memory, the per-node limit is a cluster setting "
-                    "-- raise it with whoever owns the cluster."
+                    "Try to reduce how much data the query holds at once: filter "
+                    "rows earlier, select only the columns you need, or aggregate "
+                    "before joining rather than after. If the query genuinely "
+                    "needs this much memory, the limit is a cluster setting, so "
+                    "please raise it with your cluster administrator."
                 ),
                 actual=_bytes(spilled),
                 expected="no spill",
@@ -106,7 +111,9 @@ class ScanAmplificationDetector:
                 f"< {_bytes(thresholds.scan_amplification_bytes_per_output_row)} "
                 "per output row"
             )
-            returned = f"{query.output_rows:,} row(s)"
+            returned = (
+                f"{query.output_rows:,} row{'' if query.output_rows == 1 else 's'}"
+            )
         elif query.output_bytes is not None:
             if query.output_bytes <= 0:
                 return []
@@ -136,23 +143,30 @@ class ScanAmplificationDetector:
                 ),
                 severity=Severity.HIGH,
                 domain=QueryDomain.DATA_ACCESS,
-                summary=(f"Scanned {_bytes(scanned)} to return {returned} -- {unit}"),
+                summary=(
+                    f"This query read {_bytes(scanned)} of data to produce "
+                    f"{returned}. That is far more than a result of this size "
+                    f"should need."
+                ),
                 rationale=(
-                    "Reading far more data than the result needs usually means the "
-                    "scan is not being pruned: a missing partition filter, a "
-                    "predicate that wraps the partition column in a function, or "
-                    "stale table statistics leading the optimizer to a poor plan."
+                    "Large tables are usually split into partitions -- typically "
+                    "by date -- so a query that filters on the partition column "
+                    "can skip the parts it does not need. Reading this much for "
+                    "so small a result suggests it could not skip anything and "
+                    "read the whole table instead."
                 ),
                 rationale_source=RationaleSource.RULE_CATALOG,
                 evidence=list(evidence),
                 subject=query.query_id,
                 owner=Owner.QUERY_AUTHOR,
                 next_step=(
-                    "Check the WHERE clause. The usual cause is no filter on the "
-                    "table's partition column, or a filter that hides it inside a "
-                    "function -- write date_col >= DATE '2026-01-01' rather than "
-                    "year(date_col) = 2026, so the engine can skip partitions "
-                    "instead of reading them all."
+                    "Check the WHERE clause. Either there is no filter on the "
+                    "column the table is partitioned by, or the filter wraps that "
+                    "column in a function, which stops Starburst using it. "
+                    "Comparing the column directly to a date range -- "
+                    "event_date >= DATE '2026-01-01' rather than "
+                    "year(event_date) = 2026 -- lets it skip the partitions it "
+                    "does not need."
                 ),
                 actual=unit,
                 expected=expected,

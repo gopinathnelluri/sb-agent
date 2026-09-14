@@ -71,7 +71,7 @@ class RuleContext:
         """Resolve a named quantity a ratio check compares against."""
         if name == HEAP_REFERENCE:
             heap = self.snapshot.heap_bytes(self.role)
-            return (None if heap is None else float(heap)), "JVM heap (-Xmx)"
+            return (None if heap is None else float(heap)), "the Java heap"
         if name.startswith(PROPERTY_PREFIX):
             key = name[len(PROPERTY_PREFIX) :]
             resolved = self.snapshot.resolve(key, self.role)
@@ -225,7 +225,7 @@ class Required:
         return CheckOutcome(passed=True, actual=value, expected="must be set")
 
     def describe(self) -> str:
-        return "must be set"
+        return "required but not configured"
 
 
 @register("equals")
@@ -249,7 +249,7 @@ class Equals:
         )
 
     def describe(self) -> str:
-        return f"= {self.expected}"
+        return f"not the recommended value ({self.expected})"
 
 
 @register("one_of")
@@ -277,7 +277,7 @@ class OneOf:
         )
 
     def describe(self) -> str:
-        return f"one of: {', '.join(self.allowed)}"
+        return f"not one of the supported values ({', '.join(self.allowed)})"
 
 
 @register("matches")
@@ -305,7 +305,7 @@ class Matches:
         )
 
     def describe(self) -> str:
-        return f"matches /{self.pattern.pattern}/"
+        return "not in the format Starburst accepts"
 
 
 @dataclass(frozen=True)
@@ -363,7 +363,7 @@ class Max(_Bound):
         )
 
     def describe(self) -> str:
-        return f"<= {self.literal}"
+        return f"above the recommended maximum of {self.literal}"
 
 
 @register("min")
@@ -395,7 +395,7 @@ class Min(_Bound):
         )
 
     def describe(self) -> str:
-        return f">= {self.literal}"
+        return f"below the recommended minimum of {self.literal}"
 
 
 @register("range")
@@ -442,7 +442,9 @@ class Range:
         )
 
     def describe(self) -> str:
-        return f"between {self.low.literal} and {self.high.literal}"
+        return (
+            f"outside the recommended range {self.low.literal} to {self.high.literal}"
+        )
 
 
 @dataclass(frozen=True)
@@ -495,12 +497,15 @@ class MaxRatio(_Ratio):
         return CheckOutcome(
             passed=actual <= limit,
             actual=value,
-            expected=f"<= {format_data_size(limit)} ({self.ratio:g} x {label})",
+            expected=(
+                f"higher than the recommended {format_data_size(limit)} "
+                f"({self.ratio:.0%} of {label})"
+            ),
             deviation=_relative(actual, limit),
         )
 
     def describe(self) -> str:
-        return f"<= {self.ratio:g} x {self.of}"
+        return f"higher than the recommended {self.ratio:.0%} of {self.of}"
 
 
 @register("min_ratio")
@@ -527,12 +532,15 @@ class MinRatio(_Ratio):
         return CheckOutcome(
             passed=actual >= limit,
             actual=value,
-            expected=f">= {format_data_size(limit)} ({self.ratio:g} x {label})",
+            expected=(
+                f"below the recommended {format_data_size(limit)} "
+                f"({self.ratio:.0%} of {label})"
+            ),
             deviation=_relative(limit, actual),
         )
 
     def describe(self) -> str:
-        return f">= {self.ratio:g} x {self.of}"
+        return f"below the recommended {self.ratio:.0%} of {self.of}"
 
 
 def _relative(larger: float, smaller: float) -> float | None:

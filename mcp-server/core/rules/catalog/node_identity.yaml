@@ -6,7 +6,10 @@
 
 - id: SEP-NODE-001
   domain: node_identity
-  summary: node.environment differs across nodes in the same role
+  label: "cluster name each node reports"
+  summary: >-
+    Some nodes report a different cluster name from the rest, so they will
+    not join the cluster
   consistency:
     kind: equal_across_nodes
     property: node.environment
@@ -22,7 +25,10 @@
 
 - id: SEP-NODE-002
   domain: node_identity
-  summary: coordinator and workers disagree on node.environment
+  label: "cluster name each node reports"
+  summary: >-
+    The coordinator and its workers report different cluster names, so no
+    worker can join and every query will queue
   consistency:
     kind: equal_across_roles
     property: node.environment
@@ -38,6 +44,7 @@
 
 - id: SEP-NODE-003
   domain: node_identity
+  label: "cluster name each node reports"
   property: node.environment
   check:
     kind: matches
@@ -54,8 +61,11 @@
 
 - id: SEP-NODE-004
   domain: node_identity
+  label: "directory Starburst writes its working data to"
   property: node.data-dir
-  summary: node.data-dir is not set
+  summary: >-
+    No working directory is configured, so Starburst may fail to start on a
+    node that cannot write to the default location
   check:
     kind: required
   on_missing: fail

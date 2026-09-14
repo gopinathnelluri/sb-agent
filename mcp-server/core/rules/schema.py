@@ -38,6 +38,7 @@ _CONSISTENCY_KINDS: frozenset[str] = frozenset(
 _COMMON_FIELDS = {
     "id",
     "next_step",
+    "label",
     "domain",
     "severity",
     "rationale",
@@ -95,6 +96,16 @@ class PropertyRule:
     on_missing: OnMissing = "skip"
     doc_ref: DocRef | None = None
     next_step: str | None = None
+    label: str | None = None
+
+    def subject_name(self) -> str:
+        """What to call this setting when talking to a person.
+
+        Config keys are precise but opaque -- `query.max-memory-per-node` says
+        nothing to someone who has not administered Starburst. A label lets a
+        finding open with what the setting does and mention the key after.
+        """
+        return self.label or self.property
 
     def headline(self) -> str:
         return self.summary or f"{self.property} {self.check.describe()}"
@@ -119,12 +130,16 @@ class ConsistencyRule:
     summary: str | None = None
     doc_ref: DocRef | None = None
     next_step: str | None = None
+    label: str | None = None
+
+    def subject_name(self) -> str:
+        return self.label or self.property
 
     def headline(self) -> str:
         if self.summary:
             return self.summary
         where = "nodes" if self.kind == "equal_across_nodes" else "roles"
-        return f"{self.property} must match across {where}"
+        return f"{self.subject_name()} must match across {where}"
 
 
 @dataclass(frozen=True)
@@ -146,6 +161,10 @@ class MetadataRule:
     summary: str | None = None
     doc_ref: DocRef | None = None
     next_step: str | None = None
+    label: str | None = None
+
+    def subject_name(self) -> str:
+        return self.label or self.file_pattern
 
     @property
     def property(self) -> str:
@@ -254,6 +273,7 @@ def parse_rule(raw: dict[str, Any]) -> Rule:
     doc_ref = _doc_ref(raw.get("doc_ref"), raw.get("source"), rule_id)
     summary = str(raw["summary"]).strip() if raw.get("summary") else None
     next_step = str(raw["next_step"]).strip() if raw.get("next_step") else None
+    label = str(raw["label"]).strip() if raw.get("label") else None
 
     if has_check:
         prop = str(raw.get("property") or "").strip()
@@ -281,6 +301,7 @@ def parse_rule(raw: dict[str, Any]) -> Rule:
             on_missing=_narrow_on_missing(on_missing),
             doc_ref=doc_ref,
             next_step=next_step,
+            label=label,
         )
 
     if kinds[0] == "file_check":
@@ -307,6 +328,7 @@ def parse_rule(raw: dict[str, Any]) -> Rule:
             summary=summary,
             doc_ref=doc_ref,
             next_step=next_step,
+            label=label,
         )
 
     spec = raw["consistency"]
@@ -338,6 +360,7 @@ def parse_rule(raw: dict[str, Any]) -> Rule:
         summary=summary,
         doc_ref=doc_ref,
         next_step=next_step,
+        label=label,
     )
 
 

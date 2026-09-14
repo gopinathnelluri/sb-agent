@@ -5,8 +5,11 @@
 
 - id: SEP-JVM-001
   domain: jvm
+  label: "maximum Java heap size"
   property: "-Xmx"
-  summary: maximum JVM heap is not set
+  summary: >-
+    No maximum Java heap size is set, so each node guesses how much memory
+    it may use
   check:
     kind: required
   on_missing: fail
@@ -23,6 +26,7 @@
 
 - id: SEP-JVM-002
   domain: jvm
+  label: "safeguard that shuts a node down if it runs out of memory"
   property: "-XX:ExitOnOutOfMemoryError"
   check:
     kind: equals
@@ -41,6 +45,7 @@
 
 - id: SEP-JVM-003
   domain: jvm
+  label: "memory dump that would be saved if a node ran out of memory"
   property: "-XX:HeapDumpOnOutOfMemoryError"
   check:
     kind: equals
@@ -57,6 +62,7 @@
 
 - id: SEP-JVM-004
   domain: jvm
+  label: "garbage collector region size"
   property: "-XX:G1HeapRegionSize"
   check:
     kind: range
@@ -74,7 +80,10 @@
 
 - id: SEP-JVM-005
   domain: jvm
-  summary: worker heap sizes are not uniform across the fleet
+  label: "Java heap size"
+  summary: >-
+    Worker nodes are running with different amounts of memory, so the
+    smallest one limits every query
   consistency:
     kind: equal_across_nodes
     property: "-Xmx"

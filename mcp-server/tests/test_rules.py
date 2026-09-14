@@ -63,7 +63,7 @@ class TestCheckKinds:
         outcome = build_check(
             {"kind": "max_ratio", "of": "jvm_heap", "ratio": 0.3}
         ).evaluate("40GB", RuleContext(snapshot, Role.WORKER))
-        assert outcome.missing == ["JVM heap (-Xmx)"]
+        assert outcome.missing == ["the Java heap"]
 
     def test_units_are_normalised_before_comparison(self) -> None:
         check = build_check({"kind": "max", "value": "24GB"})

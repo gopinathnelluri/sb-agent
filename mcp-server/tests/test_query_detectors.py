@@ -54,7 +54,7 @@ class TestQueueDominated:
         )[0]
         assert finding.owner is Owner.CLUSTER_OWNER
         assert finding.next_step is not None
-        assert "No change to your SQL" in finding.next_step
+        assert "nothing to fix in your SQL" in finding.next_step
 
     def test_silent_when_execution_dominates(self) -> None:
         assert (

@@ -51,16 +51,22 @@ CORRELATIONS: tuple[Correlation, ...] = (
         severity=Severity.HIGH,
         domain=QueryDomain.DATA_ACCESS,
         owner=Owner.QUERY_AUTHOR,
-        headline="Partition pruning was defeated by a function in the WHERE clause",
+        headline=(
+            "Starburst had to read the whole table because of how the WHERE "
+            "clause is written"
+        ),
         rationale=(
-            "Two independent signals agree. The runtime statistics show far more "
-            "data was read than the result needed, and the query text wraps a "
-            "partition column in a function -- which is exactly what stops the "
-            "engine skipping partitions. This is the cause, not a guess."
+            "This table is split into partitions by that column, which normally "
+            "lets Starburst read only the parts your filter needs. Wrapping the "
+            "column in a function hides its value until after the data is read, "
+            "so every partition has to be scanned first. Two separate signals "
+            "point to this -- how much data was actually read, and the shape of "
+            "the WHERE clause -- so it is the cause rather than a guess."
         ),
         next_step=(
-            "Compare the column to a date range instead of transforming it. A "
-            "rewrite is included below and returns the same rows."
+            "Compare the column directly to a date range instead of putting it "
+            "inside a function. A rewritten version of your query is included "
+            "below; it returns exactly the same rows."
         ),
     ),
     Correlation(
@@ -71,15 +77,20 @@ CORRELATIONS: tuple[Correlation, ...] = (
         severity=Severity.HIGH,
         domain=QueryDomain.QUERY_SHAPE,
         owner=Owner.QUERY_AUTHOR,
-        headline="Spilling is likely caused by a join with no condition",
+        headline=(
+            "This query ran out of memory, and a join with no condition is the "
+            "likely cause"
+        ),
         rationale=(
-            "The query ran out of memory and spilled to disk, and it contains a "
-            "join with no ON clause. An unconditioned join produces the product "
-            "of its two inputs, which is the usual way a query outgrows memory."
+            "A join without an ON clause pairs every row on one side with every "
+            "row on the other, so the result is the two row counts multiplied "
+            "together. That grows very quickly, and it is the usual reason a "
+            "query needs more memory than it is allowed."
         ),
         next_step=(
-            "Add the join condition. If the cross join is deliberate, filter both "
-            "sides down before joining them."
+            "Add the missing join condition -- usually the columns that link the "
+            "two tables. If you did mean to combine every row with every row, "
+            "filter both sides down as much as possible first."
         ),
     ),
     Correlation(
@@ -90,16 +101,17 @@ CORRELATIONS: tuple[Correlation, ...] = (
         severity=Severity.MEDIUM,
         domain=QueryDomain.DATA_ACCESS,
         owner=Owner.QUERY_AUTHOR,
-        headline="Large scan may be inflated by SELECT *",
+        headline="Selecting every column is making this query read more than it needs",
         rationale=(
-            "The query read a lot of data relative to what it returned, and it "
-            "selects every column. On a columnar format the engine reads only the "
-            "columns you name, so naming them can cut the scan substantially."
+            "These tables store each column separately, so Starburst reads only "
+            "the columns a query names. Asking for all of them with SELECT * "
+            "means reading every column, including any the query never uses."
         ),
         next_step=(
-            "Replace SELECT * with the columns you actually use. This does not "
-            "reduce the rows read, only the bytes per row -- if the row count is "
-            "also wrong, fix the filter as well."
+            "List the columns you actually use instead of SELECT *. Note this "
+            "reduces how much is read per row, not how many rows are read -- so "
+            "if the query is also scanning too many rows, the filter needs "
+            "attention too."
         ),
     ),
 )
@@ -147,7 +159,7 @@ def correlate(
                 severity=rule.severity,
                 domain=rule.domain,
                 summary=f"{rule.headline}: {pattern.fragment}",
-                rationale=f"{rule.rationale} {pattern.explanation.capitalize()}.",
+                rationale=f"{rule.rationale} ({pattern.explanation}).",
                 rationale_source=RationaleSource.RULE_CATALOG,
                 evidence=list(evidence),
                 subject=query.query_id,

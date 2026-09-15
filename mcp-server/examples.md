@@ -52,18 +52,33 @@ found: true   findings: 2   coverage.complete: False
 [HIGH]  domain: data_access  owner: query_author  (root cause)
 Starburst had to read the whole table because of how the WHERE clause is
 written: YEAR(o.order_date) = 2026
--> Compare the column directly to a date range instead of putting it inside a
-function. A rewritten version of your query is included below; it returns
-exactly the same rows.
+
+why: This table is split into partitions by that column, which normally lets
+     Starburst read only the parts your filter needs. Wrapping the column in a
+     function hides its value until after the data is read, so every partition
+     has to be scanned first. Two separate signals point to this -- how much
+     data was actually read, and the shape of the WHERE clause -- so it is the
+     cause rather than a guess. (here the column is 'order_date' and the
+     function is YEAR()).
+
+what to do: Compare the column directly to a date range instead of putting it
+     inside a function. A rewritten version of your query is included below;
+     it returns exactly the same rows.
 
 [HIGH]  domain: data_access  owner: query_author
 This query read 4TB of data to produce 6 rows. That is far more than a result
 of this size should need.
--> Check the WHERE clause. Either there is no filter on the column the table
-is partitioned by, or the filter wraps that column in a function, which stops
-Starburst using it. Comparing the column directly to a date range --
-event_date >= DATE '2026-01-01' rather than year(event_date) = 2026 -- lets it
-skip the partitions it does not need.
+
+why: Large tables are usually split into partitions -- typically by date -- so
+     a query that filters on the partition column can skip the parts it does
+     not need. Reading this much for so small a result suggests it could not
+     skip anything and read the whole table instead.
+
+what to do: Check the WHERE clause. Either there is no filter on the column
+     the table is partitioned by, or the filter wraps that column in a
+     function, which stops Starburst using it. Comparing the column directly
+     to a date range -- event_date >= DATE '2026-01-01' rather than
+     year(event_date) = 2026 -- lets it skip the partitions it does not need.
 
 suggested_sql:
 
@@ -130,10 +145,16 @@ found: true   findings: 1   coverage.complete: False
 [HIGH]  domain: scheduling  owner: cluster_owner
 This query waited 14.1min before it started running. The work itself took only
 55.0s, so almost all of the 15.0min you waited was queueing, not the query.
--> There is nothing to fix in your SQL. If this keeps happening, it is worth
-raising with your cluster owner: the cluster may need more capacity for this
-workload, or your queries may be running under a resource group that limits
-how many can run at once.
+
+why: A query queues when the cluster has no free capacity to start it, usually
+     because other queries are already using what there is. The SQL itself
+     performed normally once it got going, so changing it would not shorten
+     the wait.
+
+what to do: There is nothing to fix in your SQL. If this keeps happening, it
+     is worth raising with your cluster owner: the cluster may need more
+     capacity for this workload, or your queries may be running under a
+     resource group that limits how many can run at once.
 
 coverage.blind_spots:
   - QRY-SPILL-001 skipped: source did not provide spilled_bytes
@@ -159,6 +180,177 @@ Note the phrasing: `cluster_owner`, not `platform_team`. Where a team
 runs its own cluster the person who can fix this is a colleague --
 possibly the reader. Telling them to escalate to a platform team sends
 them looking outside their own team for someone already in it.
+
+---
+
+### A query that failed
+
+**The analyst asks:**
+
+> `20260911_141203_00518_kk9ww` errored out. Was it my query or the cluster?
+
+**The agent calls:**
+
+```python
+analyze_query(cluster="prod-analytics", query_id="20260911_141203_00518_kk9ww")
+```
+
+**The tool returns:**
+
+```
+found: true   findings: 1   coverage.complete: False
+
+[HIGH]  domain: execution  owner: query_author
+This query did not finish. It failed with EXCEEDED_MEMORY_LIMIT.
+
+why: Because the query stopped early, its timing and data-volume figures
+     describe only the part that ran. They are not a fair picture of how it
+     would perform if it completed: Query exceeded per-node memory limit of
+     24GB
+
+what to do: Fix the cause of the failure and run the query again. It is worth
+     doing that before looking at performance, since the numbers from a run
+     that stopped early are not comparable.
+
+coverage.blind_spots:
+  - QRY-SPILL-001 skipped: source did not provide spilled_bytes
+  - no per-operator statistics available from this source, so skew, join
+    explosion, broadcast sizing and dynamic-filter effectiveness could not be
+    assessed
+  - 1 check(s) skipped: required input values were not available
+```
+
+**What the agent might say:**
+
+> It ran out of memory -- it asked for more than the 24GB a single query
+> is allowed on one node. Worth noting the timing and data-volume figures
+> below describe only the part that ran before it stopped, so they are
+> not a fair picture of the query's performance. Fix the failure first,
+> then re-run and we can look at speed.
+
+A failed query is reported before anything else, because its statistics
+describe a partial execution. Reading them as performance figures leads
+somewhere wrong.
+
+---
+
+### A query that ran out of memory
+
+**The analyst asks:**
+
+> `20260911_160440_00733_mm2bb` took half an hour. It is a simple two-table query.
+
+**The agent calls:**
+
+```python
+analyze_query(cluster="prod-analytics", query_id="20260911_160440_00733_mm2bb")
+```
+
+**The tool returns:**
+
+```
+found: true   findings: 2   coverage.complete: False
+
+[HIGH]  domain: query_shape  owner: query_author  (root cause)
+This query ran out of memory, and a join with no condition is the likely
+cause: CROSS JOIN stores AS s
+
+why: A join without an ON clause pairs every row on one side with every row on
+     the other, so the result is the two row counts multiplied together. That
+     grows very quickly, and it is the usual reason a query needs more memory
+     than it is allowed. (the join to stores AS s has no ON clause).
+
+what to do: Add the missing join condition -- usually the columns that link
+     the two tables. If you did mean to combine every row with every row,
+     filter both sides down as much as possible first.
+
+[MEDIUM]  domain: memory  owner: query_author
+This query ran out of memory and wrote 56.8GB to disk to keep going, which is
+much slower than working in memory.
+
+why: Starburst holds intermediate results in memory. When a query needs more
+     than it is allowed, it writes the overflow to disk and carries on --
+     correct, but far slower. Either the query is handling more data than it
+     needs to, or the memory limit is too low for this kind of work.
+
+what to do: Try to reduce how much data the query holds at once: filter rows
+     earlier, select only the columns you need, or aggregate before joining
+     rather than after. If the query genuinely needs this much memory, the
+     limit is a cluster setting, so please raise it with your cluster owner.
+
+coverage.blind_spots:
+  - no per-operator statistics available from this source, so skew, join
+    explosion, broadcast sizing and dynamic-filter effectiveness could not be
+    assessed
+```
+
+**What the agent might say:**
+
+> The two tables are joined with a comma and no ON clause, so every
+> region is paired with every store -- 94 million rows out of two small
+> tables. That did not fit in memory, so 61GB was written to disk, which
+> is why it took so long. Adding the condition that links them should
+> bring it back to seconds.
+
+This is the same two-signal pattern as the partition case, on a
+different pair: the runtime evidence is spilling, the text evidence is a
+join with no condition. Neither alone would justify naming a cause.
+
+---
+
+### When the history did not record the SQL
+
+**The analyst asks:**
+
+> Can you look at `20260908_071510_00044_tt5hh`?
+
+**The agent calls:**
+
+```python
+analyze_query(cluster="prod-analytics", query_id="20260908_071510_00044_tt5hh")
+```
+
+**The tool returns:**
+
+```
+found: true   findings: 1   coverage.complete: False
+
+[HIGH]  domain: data_access  owner: query_author
+This query read 2.6TB of data to produce 41 rows. That is far more than a
+result of this size should need.
+
+why: Large tables are usually split into partitions -- typically by date -- so
+     a query that filters on the partition column can skip the parts it does
+     not need. Reading this much for so small a result suggests it could not
+     skip anything and read the whole table instead.
+
+what to do: Check the WHERE clause. Either there is no filter on the column
+     the table is partitioned by, or the filter wraps that column in a
+     function, which stops Starburst using it. Comparing the column directly
+     to a date range -- event_date >= DATE '2026-01-01' rather than
+     year(event_date) = 2026 -- lets it skip the partitions it does not need.
+
+coverage.blind_spots:
+  - QRY-SPILL-001 skipped: source did not provide spilled_bytes
+  - no per-operator statistics available from this source, so skew, join
+    explosion, broadcast sizing and dynamic-filter effectiveness could not be
+    assessed
+  - 1 check(s) skipped: required input values were not available
+  - the audit record did not include the SQL text, so the query itself could
+    not be examined
+```
+
+**What the agent might say:**
+
+> It read 2.9TB to return 41 rows, which is far more than a result that
+> size should need -- usually a filter that is not narrowing the scan.
+> The history did not keep this query's SQL, so I cannot point at the
+> line responsible. If you still have the query text, send it and I can
+> be specific.
+
+The runtime detectors work on whatever the source recorded, so a thin
+row still produces a real finding. What is missing is named rather than
+glossed over: without the SQL there is no root cause, only a symptom.
 
 ---
 
@@ -296,8 +488,13 @@ than the recommended 24GB (30% of the Java heap).
   actual:   40GB
   expected: higher than the recommended 24GB (30% of the Java heap)
   evidence: coordinator/coord-01.corp.com/etc/starburst/config.properties line 6
--> Lower query.max-memory-per-node to at or below 30% of the JVM heap, or
-raise -Xmx if the node has spare RAM.
+
+  why: Leaves headroom for non-query JVM allocation. Above roughly 30% of heap
+        a single query can starve the rest of the process and trigger full GC
+        pauses or an out-of-memory kill.
+
+  what to do: Lower query.max-memory-per-node to at or below 30% of the JVM
+        heap, or raise -Xmx if the node has spare RAM.
 
 [HIGH]  SEP-MEM-002  domain: memory  owner: cluster_owner
 The per-query memory limit on the worker is set to 40GB, which is higher than
@@ -305,8 +502,13 @@ the recommended 24GB (30% of the Java heap).
   actual:   40GB
   expected: higher than the recommended 24GB (30% of the Java heap)
   evidence: worker/worker-01.corp.com/etc/starburst/config.properties line 6
--> Lower query.max-memory-per-node to at or below 30% of the JVM heap, or
-raise -Xmx if the node has spare RAM.
+
+  why: Leaves headroom for non-query JVM allocation. Above roughly 30% of heap
+        a single query can starve the rest of the process and trigger full GC
+        pauses or an out-of-memory kill.
+
+  what to do: Lower query.max-memory-per-node to at or below 30% of the JVM
+        heap, or raise -Xmx if the node has spare RAM.
 
 [HIGH]  SEP-NODE-001  domain: node_identity  owner: cluster_owner
 Some nodes report a different cluster name from the rest, so they will not
@@ -314,8 +516,13 @@ join the cluster
   actual:   worker-02.corp.com=prod
   expected: all 3 worker node(s) set node.environment=production
   evidence: worker/worker-02.corp.com/etc/starburst/node.properties line 1
--> Set node.environment to the same value on every node in the role. A node
-that differs never joins the cluster.
+
+  why: Nodes only join a cluster when node.environment matches exactly. A node
+        with a different value silently forms its own cluster of one and never
+        appears as a worker, while looking healthy in isolation.
+
+  what to do: Set node.environment to the same value on every node in the
+        role. A node that differs never joins the cluster.
 
 [HIGH]  SEP-JVM-002  domain: jvm  owner: cluster_owner
 The safeguard that shuts a node down if it runs out of memory is not
@@ -323,8 +530,14 @@ configured on the coordinator.
   actual:   not set
   expected: not the recommended value (true)
   evidence: coordinator/etc/starburst/config.properties
--> Add -XX:+ExitOnOutOfMemoryError to jvm.config so the orchestrator can
-restart a node cleanly instead of leaving a half-dead one in the cluster.
+
+  why: A JVM that survives an OutOfMemoryError keeps accepting work while in
+        an unrecoverable state. Exiting lets the orchestrator restart the node
+        cleanly instead of leaving a zombie worker in the cluster.
+
+  what to do: Add -XX:+ExitOnOutOfMemoryError to jvm.config so the
+        orchestrator can restart a node cleanly instead of leaving a half-dead
+        one in the cluster.
 
 ... and 5 more
 ```
@@ -396,8 +609,15 @@ use
   actual:   not set
   expected: required but not configured
   evidence: coordinator/etc/starburst/config.properties
--> Add an explicit -Xmx to jvm.config sized to the pod's memory limit. Without
-it the JVM guesses, and under OpenShift it usually guesses wrong.
+
+  why: Without -Xmx the JVM picks a default from the container's visible
+        memory, which under OpenShift is frequently not the limit the pod
+        actually has. Every memory rule also divides against this value, so
+        its absence blinds the rest of the checks.
+
+  what to do: Add an explicit -Xmx to jvm.config sized to the pod's memory
+        limit. Without it the JVM guesses, and under OpenShift it usually
+        guesses wrong.
 
 [HIGH]  SEP-JVM-002  domain: jvm  owner: cluster_owner
 The safeguard that shuts a node down if it runs out of memory is not
@@ -405,8 +625,14 @@ configured on the coordinator.
   actual:   not set
   expected: not the recommended value (true)
   evidence: coordinator/etc/starburst/config.properties
--> Add -XX:+ExitOnOutOfMemoryError to jvm.config so the orchestrator can
-restart a node cleanly instead of leaving a half-dead one in the cluster.
+
+  why: A JVM that survives an OutOfMemoryError keeps accepting work while in
+        an unrecoverable state. Exiting lets the orchestrator restart the node
+        cleanly instead of leaving a zombie worker in the cluster.
+
+  what to do: Add -XX:+ExitOnOutOfMemoryError to jvm.config so the
+        orchestrator can restart a node cleanly instead of leaving a half-dead
+        one in the cluster.
 
 [HIGH]  SEP-MEM-001  domain: memory  owner: cluster_owner
 No per-query memory limit is set, so one large query can use up a node’s
@@ -414,8 +640,13 @@ memory
   actual:   not set
   expected: required but not configured
   evidence: coordinator/etc/starburst/config.properties
--> Set query.max-memory-per-node in config.properties, sized to roughly 30% of
-the JVM heap, then restart the affected nodes.
+
+  why: Without an explicit per-node query memory limit the cluster relies on a
+        default that is rarely right for the instance size, and a single large
+        query can exhaust worker heap.
+
+  what to do: Set query.max-memory-per-node in config.properties, sized to
+        roughly 30% of the JVM heap, then restart the affected nodes.
 
 ... and 3 more
 
@@ -464,8 +695,15 @@ recorded from the host.
   actual:   0644
   expected: no permissions beyond 0600
   evidence: hms/hms-01.corp.com/opt/sbhms/conf/hive.keytab
--> chmod 600 the keytab immediately and confirm its owner. If it has been
-readable more widely, treat the principal as compromised and rotate it.
+
+  why: A Kerberos keytab is a credential. Anyone who can read it can
+        authenticate as the principal it belongs to, with no password required
+        and no further check. It must be readable only by the account that
+        uses it.
+
+  what to do: chmod 600 the keytab immediately and confirm its owner. If it
+        has been readable more widely, treat the principal as compromised and
+        rotate it.
 
 [HIGH]  SEP-SEC-001  domain: file_security  owner: cluster_owner
 config.properties on coord-01.corp.com is readable by every account on the
@@ -473,8 +711,15 @@ host (mode 0644).
   actual:   0644
   expected: not readable by other users
   evidence: coordinator/coord-01.corp.com/etc/starburst/config.properties
--> chmod 640 the file and confirm it is owned by the Starburst service
-account, so only that account and its group can read it.
+
+  why: Trino config files routinely hold connection strings, endpoints and
+        internal hostnames, and sometimes credentials the redaction pipeline
+        did not recognise. A world-readable file exposes all of that to any
+        account on the node, including service accounts unrelated to
+        Starburst.
+
+  what to do: chmod 640 the file and confirm it is owned by the Starburst
+        service account, so only that account and its group can read it.
 ```
 
 These findings come from the `*.metadata.json` files the pipeline

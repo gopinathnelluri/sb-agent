@@ -98,9 +98,8 @@ def cast_on_join_key(
                     kind="cast_on_join_key",
                     fragment=cast.sql(dialect="trino"),
                     explanation=(
-                        f"casting '{columns[0]}' inside the join condition stops the "
-                        "engine matching on the raw column, which rules out dynamic "
-                        "filtering and can force a much larger join"
+                        f"the join condition casts '{columns[0]}' rather than "
+                        f"comparing it directly"
                     ),
                     confidence=Confidence.SUSPECTED,
                     columns=columns,
@@ -125,10 +124,7 @@ def leading_wildcard_like(
             SqlPattern(
                 kind="leading_wildcard_like",
                 fragment=like.sql(dialect="trino"),
-                explanation=(
-                    "a pattern starting with '%' has to be tested against every "
-                    "row; min/max column statistics cannot narrow it down"
-                ),
+                explanation=(f"the pattern {pattern.this!r} starts with a wildcard"),
                 confidence=Confidence.SUSPECTED,
                 columns=columns,
             )
@@ -166,10 +162,7 @@ def order_by_without_limit(
         SqlPattern(
             kind="order_by_without_limit",
             fragment=order.sql(dialect="trino"),
-            explanation=(
-                "a final ORDER BY with no LIMIT must gather every result row onto "
-                "a single node to sort it, which does not scale with the cluster"
-            ),
+            explanation="there is an ORDER BY with no LIMIT",
             confidence=Confidence.SUSPECTED,
         )
     ]
@@ -189,9 +182,7 @@ def cross_join(
                 kind="cross_join",
                 fragment=f"{side} JOIN {join.this.sql(dialect='trino')}",
                 explanation=(
-                    "a join with no condition pairs every row on the left with "
-                    "every row on the right, so output size is the product of the "
-                    "two inputs"
+                    f"the join to {join.this.sql(dialect='trino')} has no ON clause"
                 ),
                 confidence=Confidence.SUSPECTED,
             )

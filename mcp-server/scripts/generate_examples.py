@@ -71,6 +71,61 @@ QUERIES: dict[str, QueryInfo] = {
         total_bytes_scanned=2_100_000_000,
         output_rows=1_240,
     ),
+    # Failed before finishing -- its numbers describe a partial run.
+    "20260911_141203_00518_kk9ww": QueryInfo(
+        query_id="20260911_141203_00518_kk9ww",
+        cluster="prod-analytics",
+        source="audit:sep_event_logger",
+        state=QueryState.FAILED,
+        sql=(
+            "SELECT o.id, c.name, p.description FROM orders o "
+            "JOIN customers c ON o.customer_id = c.id "
+            "JOIN products p ON o.product_id = p.id "
+            "WHERE o.order_date >= DATE '2026-01-01'"
+        ),
+        user="j.okafor",
+        session_catalog="hive",
+        session_schema="sales",
+        error_code="EXCEEDED_MEMORY_LIMIT",
+        error_message=("Query exceeded per-node memory limit of 24GB"),
+        elapsed_ms=412_000,
+        queued_ms=3_000,
+        total_bytes_scanned=880_000_000_000,
+        output_rows=0,
+        peak_memory_bytes=48_000_000_000,
+    ),
+    # Ran out of memory because of a join with no condition.
+    "20260911_160440_00733_mm2bb": QueryInfo(
+        query_id="20260911_160440_00733_mm2bb",
+        cluster="prod-analytics",
+        source="audit:sep_event_logger",
+        state=QueryState.FINISHED,
+        sql=(
+            "SELECT r.region_name, s.store_name FROM regions r, stores s "
+            "WHERE r.active = true"
+        ),
+        user="j.okafor",
+        session_catalog="hive",
+        session_schema="sales",
+        elapsed_ms=1_840_000,
+        queued_ms=12_000,
+        total_bytes_scanned=140_000_000_000,
+        output_rows=94_000_000,
+        spilled_bytes=61_000_000_000,
+    ),
+    # A thin audit row: the history recorded no SQL for this one.
+    "20260908_071510_00044_tt5hh": QueryInfo(
+        query_id="20260908_071510_00044_tt5hh",
+        cluster="prod-analytics",
+        source="audit:sep_event_logger",
+        state=QueryState.FINISHED,
+        sql=None,
+        user="s.mehta",
+        elapsed_ms=688_000,
+        queued_ms=14_000,
+        total_bytes_scanned=2_900_000_000_000,
+        output_rows=41,
+    ),
     "20260910_110022_00877_zz1aa": QueryInfo(
         query_id="20260910_110022_00877_zz1aa",
         cluster="prod-analytics",
@@ -106,6 +161,8 @@ def _server() -> Any:
             partitions={
                 "orders": frozenset({"order_date"}),
                 "sales": frozenset({"sale_date"}),
+                # regions and stores are small and unpartitioned, which is why
+                # the cross-join finding stays `suspected` rather than confirmed.
             },
             retention=30,
         )
@@ -138,8 +195,10 @@ def _finding_block(finding: dict[str, Any]) -> list[str]:
         f"{'  (root cause)' if finding.get('is_root_cause') else ''}",
         _wrap(finding["summary"]),
     ]
+    if finding.get("rationale"):
+        lines += ["", _wrap("why: " + finding["rationale"], "", "     ")]
     if finding.get("next_step"):
-        lines.append(_wrap("-> " + finding["next_step"]))
+        lines += ["", _wrap("what to do: " + finding["next_step"], "", "     ")]
     return lines
 
 
@@ -192,8 +251,10 @@ def _config_finding_lines(finding: dict[str, Any]) -> list[str]:
         f"  evidence: {where}"
         + (f" line {evidence['line']}" if evidence["line"] else ""),
     ]
+    if finding.get("rationale"):
+        lines += ["", _wrap("  why: " + finding["rationale"], "", "        ")]
     if finding.get("next_step"):
-        lines.append(_wrap("-> " + finding["next_step"]))
+        lines += ["", _wrap("  what to do: " + finding["next_step"], "", "        ")]
     return lines
 
 
@@ -587,6 +648,84 @@ def render() -> str:
         "runs its own cluster the person who can fix this is a colleague --",
         "possibly the reader. Telling them to escalate to a platform team sends",
         "them looking outside their own team for someone already in it.",
+        "",
+        "---",
+        "",
+    ]
+
+    q_failed = "20260911_141203_00518_kk9ww"
+    sections.append(
+        _scenario(
+            "A query that failed",
+            f"`{q_failed}` errored out. Was it my query or the cluster?",
+            f'analyze_query(cluster="prod-analytics", query_id="{q_failed}")',
+            _call("analyze_query", {"cluster": "prod-analytics", "query_id": q_failed}),
+        )
+    )
+    sections += [
+        "**What the agent might say:**",
+        "",
+        "> It ran out of memory -- it asked for more than the 24GB a single query",
+        "> is allowed on one node. Worth noting the timing and data-volume figures",
+        "> below describe only the part that ran before it stopped, so they are",
+        "> not a fair picture of the query's performance. Fix the failure first,",
+        "> then re-run and we can look at speed.",
+        "",
+        "A failed query is reported before anything else, because its statistics",
+        "describe a partial execution. Reading them as performance figures leads",
+        "somewhere wrong.",
+        "",
+        "---",
+        "",
+    ]
+
+    q_spill = "20260911_160440_00733_mm2bb"
+    sections.append(
+        _scenario(
+            "A query that ran out of memory",
+            f"`{q_spill}` took half an hour. It is a simple two-table query.",
+            f'analyze_query(cluster="prod-analytics", query_id="{q_spill}")',
+            _call("analyze_query", {"cluster": "prod-analytics", "query_id": q_spill}),
+        )
+    )
+    sections += [
+        "**What the agent might say:**",
+        "",
+        "> The two tables are joined with a comma and no ON clause, so every",
+        "> region is paired with every store -- 94 million rows out of two small",
+        "> tables. That did not fit in memory, so 61GB was written to disk, which",
+        "> is why it took so long. Adding the condition that links them should",
+        "> bring it back to seconds.",
+        "",
+        "This is the same two-signal pattern as the partition case, on a",
+        "different pair: the runtime evidence is spilling, the text evidence is a",
+        "join with no condition. Neither alone would justify naming a cause.",
+        "",
+        "---",
+        "",
+    ]
+
+    q_thin = "20260908_071510_00044_tt5hh"
+    sections.append(
+        _scenario(
+            "When the history did not record the SQL",
+            f"Can you look at `{q_thin}`?",
+            f'analyze_query(cluster="prod-analytics", query_id="{q_thin}")',
+            _call("analyze_query", {"cluster": "prod-analytics", "query_id": q_thin}),
+        )
+    )
+    sections += [
+        "**What the agent might say:**",
+        "",
+        "> It read 2.9TB to return 41 rows, which is far more than a result that",
+        "> size should need -- usually a filter that is not narrowing the scan.",
+        "> The history did not keep this query's SQL, so I cannot point at the",
+        "> line responsible. If you still have the query text, send it and I can",
+        "> be specific.",
+        "",
+        "The runtime detectors work on whatever the source recorded, so a thin",
+        "row still produces a real finding. What is missing is named rather than",
+        "glossed over: without the SQL there is no root cause, only a symptom.",
         "",
         "---",
         "",

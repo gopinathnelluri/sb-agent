@@ -183,6 +183,128 @@ them looking outside their own team for someone already in it.
 
 ---
 
+### It was fast last month -- what changed?
+
+**The analyst asks:**
+
+> `20260910_093412_00042_x7k2m` took 21 minutes today. The same query ran in about 90 seconds on the 12th (`20260812_090015_00007_bb3ll`). Nothing in it changed.
+
+**The agent calls:**
+
+```python
+compare_queries(
+    cluster="prod-analytics",
+    query_id_a="20260812_090015_00007_bb3ll",   # the baseline
+    query_id_b="20260910_093412_00042_x7k2m",   # the run being judged
+)
+```
+
+**The tool returns:**
+
+```
+same_sql: True
+
+The same query was 13.7x slower -- 1.6min then, 21.4min now.
+
+what changed:
+  - [worsened] total time went from 1.6min to 21.4min -- 13.7x more
+  - [worsened] time spent queueing went from 6.0s to 8.0s -- 1.3x more
+  - [worsened] data scanned went from 195.6GB to 4TB -- 21.0x more
+  - [unchanged] rows returned barely changed (6)
+
+problems present in both:
+  - Starburst had to read the whole table because of how the WHERE clause is
+    written: YEAR(o.order_date) = 2026
+  - This query read 4TB of data to produce 6 rows. That is far more than a
+    result of this size should need.
+
+notes:
+  - Both runs used the same SQL, so anything that changed is outside the query
+    -- the data it reads, the cluster's load, or the statistics the optimizer
+    works from.
+```
+
+**What the agent might say:**
+
+> You are right that the query did not change -- both runs used exactly
+> the same SQL. What changed is how much data it reads: 210GB on the
+> 12th, 4TB today. The `orders` table has grown, and because the WHERE
+> clause wraps `order_date` in `year()`, Starburst cannot skip
+> partitions and has to read all of it. That was survivable when the
+> table was smaller; it is not now.
+
+This is the comparison a single analysis cannot produce. On its own,
+"4TB scanned" invites the question "is that a lot?" -- the answer is a
+judgement against a fixed threshold. Next to the same query's own
+history it is not a judgement at all, it is a measurement.
+
+`same_sql: True` is what makes the answer safe to state. The user
+changed nothing, so nothing they did caused this, and telling them
+otherwise would send them looking in the wrong place.
+
+---
+
+### Did the rewrite actually help?
+
+**The analyst asks:**
+
+> I applied the rewrite you suggested and re-ran it -- `20260910_101820_00061_ww8dd`. Did it work?
+
+**The agent calls:**
+
+```python
+compare_queries(
+    cluster="prod-analytics",
+    query_id_a="20260910_093412_00042_x7k2m",   # before the rewrite
+    query_id_b="20260910_101820_00061_ww8dd",   # after
+)
+```
+
+**The tool returns:**
+
+```
+same_sql: False
+
+The second version was 33.8x faster -- 21.4min then, 38.0s now.
+
+what changed:
+  - [improved] total time went from 21.4min to 38.0s -- 33.8x less
+  - [improved] time spent queueing went from 8.0s to 7.0s -- 1.1x less
+  - [improved] data scanned went from 4TB to 8.6GB -- 478.3x less
+  - [unchanged] rows returned barely changed (6)
+
+problems that went away:
+  - Starburst had to read the whole table because of how the WHERE clause is
+    written: YEAR(o.order_date) = 2026
+
+problems present in both:
+  - This query read 8.6GB of data to produce 6 rows. That is far more than a
+    result of this size should need.
+
+notes:
+  - The SQL differs between the two runs, so the comparison reflects the
+    rewrite as well as any change in the data.
+  - 1 problem(s) from the earlier run are no longer present.
+```
+
+**What the agent might say:**
+
+> Yes -- 33 times faster, 21 minutes down to 38 seconds, and it reads
+> 9.2GB instead of 4TB. The partition-pruning problem is gone, and the
+> query returns the same six rows it did before.
+
+This closes the loop the analyser exists for: it suggested a rewrite,
+the user applied it, and this confirms the suggestion was right rather
+than leaving them to judge. Offer it whenever someone has acted on a
+rewrite -- a suggestion nobody verifies is a suggestion nobody trusts
+the second time.
+
+Note what is checked beyond the timing: `output_rows` is unchanged, so
+the rewrite really did preserve the result. A faster query that returns
+different rows is not an improvement.
+
+---
+
 ### A query that failed
 
 **The analyst asks:**

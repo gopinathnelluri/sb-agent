@@ -16,6 +16,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
+from core.analysis.compare import QueryComparison
 from core.analysis.service import QueryAnalysis, QueryAnalysisService
 from core.errors import StarburstAgentError
 
@@ -117,6 +118,50 @@ def register_query_tools(server: MCPServer, service: QueryAnalysisService) -> No
         the id was wrong.
         """
         return service.analyze_query(cluster, query_id)
+
+    @server.tool(annotations=READ_ONLY)
+    @_formatted
+    @_translate_errors
+    def compare_queries(
+        cluster: str, query_id_a: str, query_id_b: str
+    ) -> QueryComparison:
+        """Compare two query runs and explain what changed between them.
+
+        Reach for this whenever the user's question involves a "before" -- it
+        answers questions a single analysis cannot:
+
+        * "This was fast last week, what changed?" -- pass the old run as
+          `query_id_a` and the new one as `query_id_b`.
+        * "Did my rewrite help?" -- pass the original then the rewritten run.
+          If you suggested the rewrite, this is how you find out whether the
+          suggestion was right, so offer it once the user has re-run.
+        * "Why is my query slower than theirs?" -- two different queries
+          compare fine.
+
+        Order matters: `query_id_a` is the baseline, `query_id_b` is the one
+        being judged. Every change is phrased as a move from the first to the
+        second.
+
+        `same_sql` tells you which kind of comparison this is, and it changes
+        what the numbers mean. When the SQL is identical, anything that moved
+        came from outside the query -- the data grew, the cluster got busier,
+        table statistics went stale -- and the user did nothing wrong. When
+        the SQL differs, the change reflects the rewrite. Do not blur the two.
+
+        `changes` carries a `direction` of improved, worsened or unchanged.
+        That is about outcome rather than arithmetic: reading less data is an
+        improvement even though the number went down. Differences under 10%
+        are reported as unchanged, because they are noise.
+
+        The findings lists are usually the most useful part.
+        `findings_only_in_b` are problems the later run has and the earlier
+        one did not -- that is what "what changed" usually means. Anything in
+        `findings_in_both` was already there and is not the news.
+
+        A comparison is only possible when both runs are in the history. If
+        `found` is false, read `not_found_reason`.
+        """
+        return service.compare_queries(cluster, query_id_a, query_id_b)
 
     @server.tool(annotations=READ_ONLY)
     @_formatted

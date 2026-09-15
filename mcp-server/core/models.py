@@ -454,13 +454,24 @@ class PropertyDifference:
 
 @dataclass(frozen=True)
 class ClusterDiff:
-    """Result of comparing two clusters within a set of scopes."""
+    """Result of comparing two clusters within a set of scopes.
+
+    Property differences say *what* differs. The findings lists say which of
+    those differences matter, which is usually the question being asked: "it
+    works on staging and not on production" is answered by the rules one
+    cluster fails and the other does not, far more directly than by a list of
+    every property whose value is not identical.
+    """
 
     cluster_a: str
     cluster_b: str
     scopes: list[Scope]
     differences: list[PropertyDifference]
     coverage: Coverage
+    verdict: str = ""
+    findings_only_in_a: list[Finding] = field(default_factory=list)
+    findings_only_in_b: list[Finding] = field(default_factory=list)
+    findings_in_both: list[Finding] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

@@ -59,9 +59,9 @@ evaluates a versioned rule catalog against the scopes you name.
 """.replace("\\\n", "").strip()
 
 _QUERY_USE_CASE = """
-Query analysis -- `analyze_query`, `get_query_info`. Answers "why was this \
-query slow". Reads recorded statistics for one completed query and correlates \
-them with its SQL text.
+Query analysis -- `analyze_query`, `compare_queries`, `get_query_info`. \
+Answers "why was this query slow" and "what changed since last time". Reads \
+recorded statistics for completed queries and correlates them with their SQL.
 """.replace("\\\n", "").strip()
 
 _SEPARATION_NOTE = """
@@ -298,16 +298,20 @@ def build_server(
         Use this for "it works on staging but not on production" questions,
         and for verifying that clusters intended to be identical actually are.
 
-        Every difference is classified. `unexpected` means two clusters
-        disagree on something that normally matches, and is what you should
-        lead with. `expected` covers values that differ by design, such as
-        hostnames and node identifiers -- mention them only if asked.
-        `unknown` means we have no classification for that property, so use
-        judgement and say that you are.
+        Lead with `verdict` and the findings lists -- they answer the question
+        directly. `findings_only_in_b` are problems the second cluster has and
+        the first does not, which is usually the whole explanation for "it
+        works there and not here". `findings_in_both` were already true of
+        both and are not the difference.
 
-        This reports differences, not correctness. A property can match on
-        both clusters and still be wrong on both; run `run_rules` against each
-        cluster to find that out.
+        `differences` lists every property whose value is not identical, which
+        is a longer and less pointed answer. Use it when the findings do not
+        explain the behaviour, or when the user asks what specifically differs.
+        Each one is classified: `unexpected` means the clusters disagree on
+        something that normally matches; `expected` covers values meant to
+        differ, such as hostnames and node ids -- mention those only if asked;
+        `unknown` means we have no classification, so say you are using
+        judgement.
         """
         return service.diff_clusters(cluster_a, cluster_b, scopes)
 

@@ -36,6 +36,14 @@ WHERE year(o.order_date) = 2026
   AND c.segment = 'enterprise'
 GROUP BY c.region"""
 
+SQL_FIXED = """SELECT c.region, count(*) AS orders, sum(o.amount) AS revenue
+FROM orders o
+JOIN customers c ON o.customer_id = c.id
+WHERE o.order_date >= DATE '2026-01-01'
+  AND o.order_date < DATE '2027-01-01'
+  AND c.segment = 'enterprise'
+GROUP BY c.region"""
+
 QUERIES: dict[str, QueryInfo] = {
     "20260910_093412_00042_x7k2m": QueryInfo(
         query_id="20260910_093412_00042_x7k2m",
@@ -70,6 +78,37 @@ QUERIES: dict[str, QueryInfo] = {
         queued_ms=847_000,
         total_bytes_scanned=2_100_000_000,
         output_rows=1_240,
+    ),
+    # The same SQL a month earlier, when the table was smaller. The baseline
+    # for "it used to be fast".
+    "20260812_090015_00007_bb3ll": QueryInfo(
+        query_id="20260812_090015_00007_bb3ll",
+        cluster="prod-analytics",
+        source="audit:sep_event_logger",
+        state=QueryState.FINISHED,
+        sql=SQL_BAD,
+        user="a.patel",
+        session_catalog="hive",
+        session_schema="sales",
+        elapsed_ms=94_000,
+        queued_ms=6_000,
+        total_bytes_scanned=210_000_000_000,
+        output_rows=6,
+    ),
+    # The same query after applying the suggested rewrite.
+    "20260910_101820_00061_ww8dd": QueryInfo(
+        query_id="20260910_101820_00061_ww8dd",
+        cluster="prod-analytics",
+        source="audit:sep_event_logger",
+        state=QueryState.FINISHED,
+        sql=SQL_FIXED,
+        user="a.patel",
+        session_catalog="hive",
+        session_schema="sales",
+        elapsed_ms=38_000,
+        queued_ms=7_000,
+        total_bytes_scanned=9_200_000_000,
+        output_rows=6,
     ),
     # Failed before finishing -- its numbers describe a partial run.
     "20260911_141203_00518_kk9ww": QueryInfo(
@@ -232,6 +271,41 @@ def _scenario(
             out += [
                 _wrap(f"- {spot}", "  ", "    ") for spot in coverage["blind_spots"]
             ]
+    out += ["```", ""]
+    return "\n".join(out)
+
+
+def _comparison_scenario(
+    title: str, question: str, tool_call: str, payload: dict[str, Any]
+) -> str:
+    out = [f"### {title}", "", "**The analyst asks:**", "", f"> {question}", ""]
+    out += ["**The agent calls:**", "", "```python", tool_call, "```", ""]
+    out += ["**The tool returns:**", "", "```"]
+    out.append(f"same_sql: {payload['same_sql']}")
+    out += ["", _wrap(payload["verdict"])]
+
+    moved = [c for c in payload["changes"] if c["summary"]]
+    if moved:
+        out += ["", "what changed:"]
+        for change in moved:
+            out.append(
+                _wrap(f"- [{change['direction']}] {change['summary']}", "  ", "    ")
+            )
+
+    for label, key in (
+        ("problems that went away:", "findings_only_in_a"),
+        ("problems that appeared:", "findings_only_in_b"),
+        ("problems present in both:", "findings_in_both"),
+    ):
+        entries = payload[key]
+        if entries:
+            out += ["", label]
+            for finding in entries:
+                out.append(_wrap(f"- {finding['summary']}", "  ", "    "))
+
+    if payload["notes"]:
+        out += ["", "notes:"]
+        out += [_wrap(f"- {note}", "  ", "    ") for note in payload["notes"]]
     out += ["```", ""]
     return "\n".join(out)
 
@@ -648,6 +722,88 @@ def render() -> str:
         "runs its own cluster the person who can fix this is a colleague --",
         "possibly the reader. Telling them to escalate to a platform team sends",
         "them looking outside their own team for someone already in it.",
+        "",
+        "---",
+        "",
+    ]
+
+    old, new = "20260812_090015_00007_bb3ll", "20260910_093412_00042_x7k2m"
+    sections.append(
+        _comparison_scenario(
+            "It was fast last month -- what changed?",
+            f"`{new}` took 21 minutes today. The same query ran in about 90 "
+            f"seconds on the 12th (`{old}`). Nothing in it changed.",
+            f'compare_queries(\n    cluster="prod-analytics",\n'
+            f'    query_id_a="{old}",   # the baseline\n'
+            f'    query_id_b="{new}",   # the run being judged\n)',
+            _call(
+                "compare_queries",
+                {
+                    "cluster": "prod-analytics",
+                    "query_id_a": old,
+                    "query_id_b": new,
+                },
+            ),
+        )
+    )
+    sections += [
+        "**What the agent might say:**",
+        "",
+        "> You are right that the query did not change -- both runs used exactly",
+        "> the same SQL. What changed is how much data it reads: 210GB on the",
+        "> 12th, 4TB today. The `orders` table has grown, and because the WHERE",
+        "> clause wraps `order_date` in `year()`, Starburst cannot skip",
+        "> partitions and has to read all of it. That was survivable when the",
+        "> table was smaller; it is not now.",
+        "",
+        "This is the comparison a single analysis cannot produce. On its own,",
+        '"4TB scanned" invites the question "is that a lot?" -- the answer is a',
+        "judgement against a fixed threshold. Next to the same query's own",
+        "history it is not a judgement at all, it is a measurement.",
+        "",
+        "`same_sql: True` is what makes the answer safe to state. The user",
+        "changed nothing, so nothing they did caused this, and telling them",
+        "otherwise would send them looking in the wrong place.",
+        "",
+        "---",
+        "",
+    ]
+
+    fixed = "20260910_101820_00061_ww8dd"
+    sections.append(
+        _comparison_scenario(
+            "Did the rewrite actually help?",
+            f"I applied the rewrite you suggested and re-ran it -- "
+            f"`{fixed}`. Did it work?",
+            f'compare_queries(\n    cluster="prod-analytics",\n'
+            f'    query_id_a="{new}",   # before the rewrite\n'
+            f'    query_id_b="{fixed}",   # after\n)',
+            _call(
+                "compare_queries",
+                {
+                    "cluster": "prod-analytics",
+                    "query_id_a": new,
+                    "query_id_b": fixed,
+                },
+            ),
+        )
+    )
+    sections += [
+        "**What the agent might say:**",
+        "",
+        "> Yes -- 33 times faster, 21 minutes down to 38 seconds, and it reads",
+        "> 9.2GB instead of 4TB. The partition-pruning problem is gone, and the",
+        "> query returns the same six rows it did before.",
+        "",
+        "This closes the loop the analyser exists for: it suggested a rewrite,",
+        "the user applied it, and this confirms the suggestion was right rather",
+        "than leaving them to judge. Offer it whenever someone has acted on a",
+        "rewrite -- a suggestion nobody verifies is a suggestion nobody trusts",
+        "the second time.",
+        "",
+        "Note what is checked beyond the timing: `output_rows` is unchanged, so",
+        "the rewrite really did preserve the result. A faster query that returns",
+        "different rows is not an improvement.",
         "",
         "---",
         "",

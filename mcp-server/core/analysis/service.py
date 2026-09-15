@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from core.analysis.compare import QueryComparison, compare
 from core.analysis.correlate import correlate
 from core.analysis.detectors.base import Thresholds
 from core.analysis.engine import analyze as run_detectors
@@ -114,6 +115,46 @@ class QueryAnalysisService:
                 blind_spots=blind_spots,
             ),
         )
+
+    def compare_queries(
+        self, cluster: str, query_id_a: str, query_id_b: str
+    ) -> QueryComparison:
+        """Compare two executions and say what changed between them.
+
+        Each side is analysed exactly as it would be on its own, then the two
+        results are diffed. That keeps one code path for "what is wrong with
+        this query" and means a comparison can never disagree with the
+        individual analyses a user might run alongside it.
+        """
+        missing = [
+            qid
+            for qid in (query_id_a, query_id_b)
+            if self._repository.get_query(cluster, qid) is None
+        ]
+        if missing:
+            retention = self._repository.retention_days()
+            window = (
+                f" History covers roughly the last {retention} days."
+                if retention
+                else ""
+            )
+            return QueryComparison(
+                cluster=cluster,
+                query_id_a=query_id_a,
+                query_id_b=query_id_b,
+                found=False,
+                not_found_reason=(
+                    f"No record of {', '.join(repr(q) for q in missing)} on "
+                    f"cluster {cluster!r}. Both queries must be in the history "
+                    f"to compare them.{window}"
+                ),
+            )
+
+        first = self.analyze_query(cluster, query_id_a)
+        second = self.analyze_query(cluster, query_id_b)
+        assert first.query is not None
+        assert second.query is not None
+        return compare(first.query, second.query, first.findings, second.findings)
 
     def _table_facts(self, query: QueryInfo) -> dict[str, TableFacts]:
         """Look up partition columns for the tables the query touched.

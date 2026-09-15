@@ -35,6 +35,7 @@ from core.models import (
     ConfigDetail,
     ConfigSummary,
     Coverage,
+    Finding,
     InjectedContext,
     ParseFailure,
     PropertyDifference,
@@ -265,12 +266,27 @@ class ConfigValidationService:
                     )
                 )
 
+        # Run the catalog against both. Which rules one fails and the other
+        # passes is the answer to "it works here and not there"; a list of
+        # every differing property rarely is.
+        rules_a = self.run_rules(cluster_a, scopes)
+        rules_b = self.run_rules(cluster_b, scopes)
+        by_a = {(f.rule_id, f.subject): f for f in rules_a.findings}
+        by_b = {(f.rule_id, f.subject): f for f in rules_b.findings}
+        only_a = [f for key, f in by_a.items() if key not in by_b]
+        only_b = [f for key, f in by_b.items() if key not in by_a]
+        both = [f for key, f in by_b.items() if key in by_a]
+
         return ClusterDiff(
             cluster_a=cluster_a,
             cluster_b=cluster_b,
             scopes=list(scopes),
             differences=_rank(differences),
             coverage=self._coverage(left, scopes, evaluated=len(keys)),
+            verdict=_diff_verdict(cluster_a, cluster_b, only_a, only_b, both),
+            findings_only_in_a=sort_findings(only_a),
+            findings_only_in_b=sort_findings(only_b),
+            findings_in_both=sort_findings(both),
         )
 
     # -- internals ------------------------------------------------------
@@ -535,6 +551,37 @@ _VERSION_SOURCES: dict[str, VersionSource] = {
 def _version_source(source: str) -> VersionSource:
     """Narrow a detected source to the values the wire type allows."""
     return _VERSION_SOURCES.get(source, "unknown")
+
+
+def _diff_verdict(
+    cluster_a: str,
+    cluster_b: str,
+    only_a: list[Finding],
+    only_b: list[Finding],
+    both: list[Finding],
+) -> str:
+    """One sentence answering "why does it work there and not here"."""
+    if not only_a and not only_b:
+        if both:
+            return (
+                f"Both clusters have the same {len(both)} problem(s) -- nothing "
+                f"in their configuration explains a difference in behaviour."
+            )
+        return "Neither cluster has any problems in the scopes checked."
+
+    parts: list[str] = []
+    if only_b:
+        parts.append(
+            f"{cluster_b} has {len(only_b)} problem(s) that {cluster_a} does not"
+        )
+    if only_a:
+        parts.append(
+            f"{cluster_a} has {len(only_a)} problem(s) that {cluster_b} does not"
+        )
+    sentence = "; ".join(parts) + "."
+    if both:
+        sentence += f" {len(both)} problem(s) are present on both."
+    return sentence
 
 
 def _rank(differences: list[PropertyDifference]) -> list[PropertyDifference]:

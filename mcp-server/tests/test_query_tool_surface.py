@@ -30,7 +30,7 @@ SLOW = QueryInfo(
     output_rows=112,
 )
 
-EXPECTED_QUERY_TOOLS = {"analyze_query", "get_query_info"}
+EXPECTED_QUERY_TOOLS = {"analyze_query", "compare_queries", "get_query_info"}
 
 
 def _server() -> Any:

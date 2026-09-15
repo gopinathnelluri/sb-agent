@@ -410,6 +410,7 @@ def _config_scenario(
     payload: dict[str, Any],
     *,
     limit: int | None = None,
+    answer: list[str] | None = None,
     trailer: list[str] | None = None,
 ) -> str:
     out = [f"### {title}", "", "**The user asks:**", "", f"> {question}", ""]
@@ -431,6 +432,10 @@ def _config_scenario(
         out += ["", "coverage.blind_spots:"]
         out += [_wrap(f"- {spot}", "  ", "    ") for spot in coverage["blind_spots"]]
     out += ["```", ""]
+    if answer:
+        out += ["**What the agent might say:**", ""]
+        out += [">" if not line else _wrap(line, "> ", "> ") for line in answer]
+        out += [""]
     if trailer:
         out += trailer + [""]
     return "\n".join(out)
@@ -493,6 +498,28 @@ def _config_misconfigured() -> str:
         '    scopes=["memory", "jvm", "node_identity"],\n)',
         payload,
         limit=4,
+        answer=[
+            "Nine things, and none of them are yours to change -- they all need "
+            "your cluster owner. Three are worth raising now.",
+            "",
+            "The biggest is that one worker has the wrong cluster name. "
+            "worker-02 is set to `prod` while the other two say `production`, "
+            "and Starburst only lets a node join when that value matches "
+            "exactly. It is almost certainly not in the cluster at all, which "
+            "means you are running on two workers rather than three.",
+            "",
+            "The other two are about memory. A single query is allowed 40GB on "
+            "a node whose Java heap is 80GB, so one large query can starve "
+            "everything else -- 24GB would be the usual ceiling. And the "
+            "safeguard that restarts a node after it runs out of memory is "
+            "switched off, so a node that dies stays in the cluster accepting "
+            "work it cannot do.",
+            "",
+            "All three come with a file and a line number, so a message to your "
+            "cluster owner can be specific: `node.environment` on "
+            "worker-02.corp.com line 1, `query.max-memory-per-node` on the "
+            "coordinator and worker line 6.",
+        ],
         trailer=[
             "Every finding cites a file, a node, and a line. That is what makes the",
             "answer checkable rather than merely plausible -- and it is why",
@@ -519,6 +546,11 @@ def _config_healthy() -> str:
         'run_rules(\n    cluster="clean-cluster",\n'
         '    scopes=["memory", "jvm", "node_identity"],\n)',
         payload,
+        answer=[
+            "Nothing wrong. All 24 checks ran -- memory sizing, JVM flags and "
+            "node identity -- and every one passed, so this is a clean result "
+            "rather than a check that could not run."
+        ],
         trailer=[
             "Nothing found, and `coverage.complete` is true with 24 rules actually",
             "evaluated -- so the silence means the cluster is fine, not that the",
@@ -544,6 +576,22 @@ def _config_missing_settings() -> str:
         '    scopes=["memory", "jvm", "node_identity"],\n)',
         payload,
         limit=3,
+        answer=[
+            "I have to be careful how I answer this one. Only 8 of the 24 "
+            "checks could run, so `bare-cluster` is not confirmed healthy -- "
+            "most of it simply was not examined.",
+            "",
+            "What did run found settings that were never configured at all. "
+            "There is no per-query memory limit, so nothing caps how much "
+            "memory a single query can take on a node; and the flag that shuts "
+            "a node down after it runs out of memory is absent. Both are "
+            "defaults that are wrong for a production cluster rather than "
+            "values someone chose.",
+            "",
+            "The 16 checks that did not run needed values this cluster does not "
+            "set, so they had nothing to compare against. Once the properties "
+            "above exist, re-running this will cover much more.",
+        ],
         trailer=[
             "Two things to notice.",
             "",
@@ -572,6 +620,23 @@ def _config_file_security() -> str:
         "Are the config files on `drifted-cluster` locked down properly?",
         'run_rules(\n    cluster="drifted-cluster",\n    scopes=["file_security"],\n)',
         payload,
+        answer=[
+            "Not quite. Two files on the coordinator can be read by every "
+            "account on that host.",
+            "",
+            "One is a Kerberos keytab -- a credential file, which should be "
+            "readable only by the account Starburst runs as. Anyone who can log "
+            "in to that host can currently copy it and authenticate as the "
+            "service.",
+            "",
+            "Worth knowing how I can tell: the keytab's contents are never "
+            "backed up, and should not be. What is backed up is a small file "
+            "recording its owner and permissions, which is enough to spot the "
+            "problem without the credential ever leaving the host.",
+            "",
+            "This one is for your cluster owner, and it is the kind of thing "
+            "worth flagging today rather than at the next review.",
+        ],
         trailer=[
             "These findings come from the `*.metadata.json` files the pipeline",
             "writes beside each config, not from the config contents. A file can",

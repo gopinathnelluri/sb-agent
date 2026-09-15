@@ -94,7 +94,18 @@ class Check(Protocol):
         ...
 
     def describe(self) -> str:
-        """Human-readable statement of what this check requires."""
+        """How this check reads when it fails: "above the recommended 24GB"."""
+        ...
+
+    def requirement(self) -> str:
+        """The value the check wants, phrased as a value: "at or below 24GB".
+
+        Kept apart from ``describe`` because the two are read in opposite
+        positions. ``describe`` completes a sentence about what went wrong;
+        ``requirement`` fills the ``expected`` field next to ``actual``, where
+        a description of the failure would say the expected value is itself
+        the problem.
+        """
         ...
 
 
@@ -227,6 +238,9 @@ class Required:
     def describe(self) -> str:
         return "required but not configured"
 
+    def requirement(self) -> str:
+        return "must be set"
+
 
 @register("equals")
 @dataclass(frozen=True)
@@ -245,11 +259,14 @@ class Equals:
         return CheckOutcome(
             passed=value.strip().lower() == self.expected.strip().lower(),
             actual=value,
-            expected=self.describe(),
+            expected=self.requirement(),
         )
 
     def describe(self) -> str:
         return f"not the recommended value ({self.expected})"
+
+    def requirement(self) -> str:
+        return self.expected
 
 
 @register("one_of")
@@ -273,11 +290,14 @@ class OneOf:
         return CheckOutcome(
             passed=value.strip().lower() in lowered,
             actual=value,
-            expected=self.describe(),
+            expected=self.requirement(),
         )
 
     def describe(self) -> str:
         return f"not one of the supported values ({', '.join(self.allowed)})"
+
+    def requirement(self) -> str:
+        return f"one of: {', '.join(self.allowed)}"
 
 
 @register("matches")
@@ -301,11 +321,14 @@ class Matches:
         return CheckOutcome(
             passed=self.pattern.search(value) is not None,
             actual=value,
-            expected=self.describe(),
+            expected=self.requirement(),
         )
 
     def describe(self) -> str:
         return "not in the format Starburst accepts"
+
+    def requirement(self) -> str:
+        return f"a value matching {self.pattern.pattern}"
 
 
 @dataclass(frozen=True)
@@ -353,17 +376,20 @@ class Max(_Bound):
         actual = _read(value, self.value_type)
         if actual is None:
             return CheckOutcome.unavailable(
-                value, self.describe(), ["unparseable value"]
+                value, self.requirement(), ["unparseable value"]
             )
         return CheckOutcome(
             passed=actual <= self.threshold,
             actual=value,
-            expected=self.describe(),
+            expected=self.requirement(),
             deviation=_relative(actual, self.threshold),
         )
 
     def describe(self) -> str:
         return f"above the recommended maximum of {self.literal}"
+
+    def requirement(self) -> str:
+        return f"at or below {self.literal}"
 
 
 @register("min")
@@ -385,17 +411,20 @@ class Min(_Bound):
         actual = _read(value, self.value_type)
         if actual is None:
             return CheckOutcome.unavailable(
-                value, self.describe(), ["unparseable value"]
+                value, self.requirement(), ["unparseable value"]
             )
         return CheckOutcome(
             passed=actual >= self.threshold,
             actual=value,
-            expected=self.describe(),
+            expected=self.requirement(),
             deviation=_relative(self.threshold, actual),
         )
 
     def describe(self) -> str:
         return f"below the recommended minimum of {self.literal}"
+
+    def requirement(self) -> str:
+        return f"at least {self.literal}"
 
 
 @register("range")
@@ -426,7 +455,7 @@ class Range:
         actual = _read(value, self.low.value_type)
         if actual is None:
             return CheckOutcome.unavailable(
-                value, self.describe(), ["unparseable value"]
+                value, self.requirement(), ["unparseable value"]
             )
         if actual < self.low.threshold:
             deviation = _relative(self.low.threshold, actual)
@@ -437,7 +466,7 @@ class Range:
         return CheckOutcome(
             passed=self.low.threshold <= actual <= self.high.threshold,
             actual=value,
-            expected=self.describe(),
+            expected=self.requirement(),
             deviation=deviation,
         )
 
@@ -445,6 +474,9 @@ class Range:
         return (
             f"outside the recommended range {self.low.literal} to {self.high.literal}"
         )
+
+    def requirement(self) -> str:
+        return f"between {self.low.literal} and {self.high.literal}"
 
 
 @dataclass(frozen=True)
@@ -488,24 +520,26 @@ class MaxRatio(_Ratio):
     def evaluate(self, value: str, context: RuleContext) -> CheckOutcome:
         limit, label = self.limit(context)
         if limit is None:
-            return CheckOutcome.unavailable(value, self.describe(), [label])
+            return CheckOutcome.unavailable(value, self.requirement(), [label])
         actual = _read(value, "bytes")
         if actual is None:
             return CheckOutcome.unavailable(
-                value, self.describe(), ["unparseable value"]
+                value, self.requirement(), ["unparseable value"]
             )
         return CheckOutcome(
             passed=actual <= limit,
             actual=value,
             expected=(
-                f"higher than the recommended {format_data_size(limit)} "
-                f"({self.ratio:.0%} of {label})"
+                f"at or below {format_data_size(limit)} ({self.ratio:.0%} of {label})"
             ),
             deviation=_relative(actual, limit),
         )
 
     def describe(self) -> str:
         return f"higher than the recommended {self.ratio:.0%} of {self.of}"
+
+    def requirement(self) -> str:
+        return f"at or below {self.ratio:.0%} of {self.of}"
 
 
 @register("min_ratio")
@@ -523,24 +557,26 @@ class MinRatio(_Ratio):
     def evaluate(self, value: str, context: RuleContext) -> CheckOutcome:
         limit, label = self.limit(context)
         if limit is None:
-            return CheckOutcome.unavailable(value, self.describe(), [label])
+            return CheckOutcome.unavailable(value, self.requirement(), [label])
         actual = _read(value, "bytes")
         if actual is None:
             return CheckOutcome.unavailable(
-                value, self.describe(), ["unparseable value"]
+                value, self.requirement(), ["unparseable value"]
             )
         return CheckOutcome(
             passed=actual >= limit,
             actual=value,
             expected=(
-                f"below the recommended {format_data_size(limit)} "
-                f"({self.ratio:.0%} of {label})"
+                f"at least {format_data_size(limit)} ({self.ratio:.0%} of {label})"
             ),
             deviation=_relative(limit, actual),
         )
 
     def describe(self) -> str:
         return f"below the recommended {self.ratio:.0%} of {self.of}"
+
+    def requirement(self) -> str:
+        return f"at least {self.ratio:.0%} of {self.of}"
 
 
 def _relative(larger: float, smaller: float) -> float | None:

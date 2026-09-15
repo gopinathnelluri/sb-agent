@@ -276,7 +276,7 @@ def _handle_absent(
             snapshot=snapshot,
             evidence=evidence,
             actual="not set",
-            expected=rule.check.describe(),
+            expected=rule.check.requirement(),
             deviation=None,
             summary=(
                 rule.summary

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from core.config.snapshot import ClusterSnapshot, NodeConfig
@@ -216,3 +218,62 @@ class TestShippedCatalog:
         used = {rule.severity for rule in catalog.rules}
         assert len(used) >= 3
         assert Severity.CRITICAL in used
+
+
+class TestExpectedReadsAsAValue:
+    """`expected` sits beside `actual`, so it must name the wanted value.
+
+    The failure phrasing that reads well in a summary -- "above the
+    recommended maximum of 24GB" -- becomes nonsense in that position: it
+    says the expected value is itself the problem.
+    """
+
+    def _outcome(self, spec: dict[str, Any], value: str) -> str:
+        context = RuleContext(snapshot=_snapshot(), role=Role.WORKER)
+        return build_check(spec).evaluate(value, context).expected
+
+    def test_max_states_the_ceiling(self) -> None:
+        assert self._outcome({"kind": "max", "value": "24GB"}, "40GB") == (
+            "at or below 24GB"
+        )
+
+    def test_min_states_the_floor(self) -> None:
+        assert self._outcome({"kind": "min", "value": "8"}, "2") == "at least 8"
+
+    def test_equals_states_the_value_alone(self) -> None:
+        assert self._outcome({"kind": "equals", "value": "true"}, "false") == "true"
+
+    def test_one_of_lists_what_is_allowed(self) -> None:
+        spec: dict[str, Any] = {"kind": "one_of", "values": ["a", "b"]}
+        assert self._outcome(spec, "c") == "one of: a, b"
+
+    def test_range_states_both_bounds(self) -> None:
+        spec: dict[str, Any] = {"kind": "range", "min": "1", "max": "5"}
+        assert self._outcome(spec, "9") == "between 1 and 5"
+
+    def test_ratio_states_the_resolved_limit(self) -> None:
+        """A percentage of something the reader cannot see is not checkable."""
+        spec: dict[str, Any] = {"kind": "max_ratio", "of": "jvm_heap", "ratio": 0.3}
+        assert self._outcome(spec, "40GB") == "at or below 24GB (30% of the Java heap)"
+
+    def test_failure_phrasing_is_still_available_for_summaries(self) -> None:
+        """The two forms stay separate rather than one replacing the other."""
+        check = build_check({"kind": "max", "value": "24GB"})
+        assert check.describe() == "above the recommended maximum of 24GB"
+        assert check.requirement() == "at or below 24GB"
+
+    def test_no_expected_reads_as_a_complaint(self) -> None:
+        """A blanket guard, so a new check kind cannot reintroduce this."""
+        specs: list[dict[str, Any]] = [
+            {"kind": "max", "value": "24GB"},
+            {"kind": "min", "value": "8"},
+            {"kind": "equals", "value": "true"},
+            {"kind": "one_of", "values": ["a", "b"]},
+            {"kind": "range", "min": "1", "max": "5"},
+            {"kind": "max_ratio", "of": "heap", "ratio": 0.3},
+            {"kind": "min_ratio", "of": "heap", "ratio": 0.1},
+        ]
+        complaints = ("above ", "below ", "higher than", "outside ", "not ")
+        for spec in specs:
+            requirement = build_check(spec).requirement()
+            assert not requirement.startswith(complaints), spec

@@ -765,10 +765,10 @@ run_rules(
 findings: 9   coverage.complete: True   rules_evaluated: 24
 
 [HIGH]  SEP-MEM-002  domain: memory  owner: cluster_owner
-The per-query memory limit on the coordinator is set to 40GB, which is higher
-than the recommended 24GB (30% of the Java heap).
+The per-query memory limit on the coordinator is set to 40GB, which is at or
+below 24GB (30% of the Java heap).
   actual:   40GB
-  expected: higher than the recommended 24GB (30% of the Java heap)
+  expected: at or below 24GB (30% of the Java heap)
   evidence: coordinator/coord-01.corp.com/etc/starburst/config.properties line 6
 
   why: Leaves headroom for non-query JVM allocation. Above roughly 30% of heap
@@ -779,10 +779,10 @@ than the recommended 24GB (30% of the Java heap).
         heap, or raise -Xmx if the node has spare RAM.
 
 [HIGH]  SEP-MEM-002  domain: memory  owner: cluster_owner
-The per-query memory limit on the worker is set to 40GB, which is higher than
-the recommended 24GB (30% of the Java heap).
+The per-query memory limit on the worker is set to 40GB, which is at or below
+24GB (30% of the Java heap).
   actual:   40GB
-  expected: higher than the recommended 24GB (30% of the Java heap)
+  expected: at or below 24GB (30% of the Java heap)
   evidence: worker/worker-01.corp.com/etc/starburst/config.properties line 6
 
   why: Leaves headroom for non-query JVM allocation. Above roughly 30% of heap
@@ -810,7 +810,7 @@ join the cluster
 The safeguard that shuts a node down if it runs out of memory is not
 configured on the coordinator.
   actual:   not set
-  expected: not the recommended value (true)
+  expected: true
   evidence: coordinator/etc/starburst/config.properties
 
   why: A JVM that survives an OutOfMemoryError keeps accepting work while in
@@ -823,6 +823,27 @@ configured on the coordinator.
 
 ... and 5 more
 ```
+
+**What the agent might say:**
+
+> Nine things, and none of them are yours to change -- they all need your
+> cluster owner. Three are worth raising now.
+>
+> The biggest is that one worker has the wrong cluster name. worker-02 is set
+> to `prod` while the other two say `production`, and Starburst only lets a
+> node join when that value matches exactly. It is almost certainly not in the
+> cluster at all, which means you are running on two workers rather than
+> three.
+>
+> The other two are about memory. A single query is allowed 40GB on a node
+> whose Java heap is 80GB, so one large query can starve everything else --
+> 24GB would be the usual ceiling. And the safeguard that restarts a node
+> after it runs out of memory is switched off, so a node that dies stays in
+> the cluster accepting work it cannot do.
+>
+> All three come with a file and a line number, so a message to your cluster
+> owner can be specific: `node.environment` on worker-02.corp.com line 1,
+> `query.max-memory-per-node` on the coordinator and worker line 6.
 
 Every finding cites a file, a node, and a line. That is what makes the
 answer checkable rather than merely plausible -- and it is why
@@ -855,6 +876,12 @@ run_rules(
 ```
 findings: 0   coverage.complete: True   rules_evaluated: 24
 ```
+
+**What the agent might say:**
+
+> Nothing wrong. All 24 checks ran -- memory sizing, JVM flags and node
+> identity -- and every one passed, so this is a clean result rather than a
+> check that could not run.
 
 Nothing found, and `coverage.complete` is true with 24 rules actually
 evaluated -- so the silence means the cluster is fine, not that the
@@ -889,7 +916,7 @@ findings: 6   coverage.complete: False   rules_evaluated: 8
 No maximum Java heap size is set, so each node guesses how much memory it may
 use
   actual:   not set
-  expected: required but not configured
+  expected: must be set
   evidence: coordinator/etc/starburst/config.properties
 
   why: Without -Xmx the JVM picks a default from the container's visible
@@ -905,7 +932,7 @@ use
 The safeguard that shuts a node down if it runs out of memory is not
 configured on the coordinator.
   actual:   not set
-  expected: not the recommended value (true)
+  expected: true
   evidence: coordinator/etc/starburst/config.properties
 
   why: A JVM that survives an OutOfMemoryError keeps accepting work while in
@@ -920,7 +947,7 @@ configured on the coordinator.
 No per-query memory limit is set, so one large query can use up a node’s
 memory
   actual:   not set
-  expected: required but not configured
+  expected: must be set
   evidence: coordinator/etc/starburst/config.properties
 
   why: Without an explicit per-node query memory limit the cluster relies on a
@@ -935,6 +962,22 @@ memory
 coverage.blind_spots:
   - 5 check(s) skipped: required input values were not available
 ```
+
+**What the agent might say:**
+
+> I have to be careful how I answer this one. Only 8 of the 24 checks could
+> run, so `bare-cluster` is not confirmed healthy -- most of it simply was not
+> examined.
+>
+> What did run found settings that were never configured at all. There is no
+> per-query memory limit, so nothing caps how much memory a single query can
+> take on a node; and the flag that shuts a node down after it runs out of
+> memory is absent. Both are defaults that are wrong for a production cluster
+> rather than values someone chose.
+>
+> The 16 checks that did not run needed values this cluster does not set, so
+> they had nothing to compare against. Once the properties above exist, re-
+> running this will cover much more.
 
 Two things to notice.
 
@@ -1003,6 +1046,23 @@ host (mode 0644).
   what to do: chmod 640 the file and confirm it is owned by the Starburst
         service account, so only that account and its group can read it.
 ```
+
+**What the agent might say:**
+
+> Not quite. Two files on the coordinator can be read by every account on that
+> host.
+>
+> One is a Kerberos keytab -- a credential file, which should be readable only
+> by the account Starburst runs as. Anyone who can log in to that host can
+> currently copy it and authenticate as the service.
+>
+> Worth knowing how I can tell: the keytab's contents are never backed up, and
+> should not be. What is backed up is a small file recording its owner and
+> permissions, which is enough to spot the problem without the credential ever
+> leaving the host.
+>
+> This one is for your cluster owner, and it is the kind of thing worth
+> flagging today rather than at the next review.
 
 These findings come from the `*.metadata.json` files the pipeline
 writes beside each config, not from the config contents. A file can

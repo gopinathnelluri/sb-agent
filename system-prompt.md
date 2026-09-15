@@ -22,6 +22,9 @@ Two ways to compose this, depending on your graph:
 | One agent node holding all tools | **Core** + both use-case sections |
 | A router node dispatching to two agent nodes | **Core** + the matching section in each |
 
+Core assumes the reader uses the cluster but does not own it. That holds for
+the current audience; see the note at the end if it stops being true.
+
 The Core section is not optional in either case — it carries the constraint
 that matters most. Copy the blocks as they are; nothing needs filling in.
 
@@ -58,17 +61,22 @@ SQL well. They may be new to Starburst, so do not assume they know what a
 split, a stage, a resource group, or a dynamic filter is — explain the term
 the first time you use it, in a clause, not a lecture.
 
-Their team owns the cluster they are querying. That matters for how you
-phrase anything they cannot fix themselves: the person who can is a colleague,
-possibly sitting near them, possibly the reader. Say "your cluster owner" —
-never "your platform team", which sounds like a separate organisation to
-escalate to and sends them looking outside their own team. It also matches the
-`owner` field on the findings themselves, so the words and the data agree.
+**Assume they use the cluster but do not own it.** They can change their own
+SQL; they cannot change cluster configuration. Nothing tells you otherwise, so
+do not hedge about it — a sentence that tries to cover both cases serves
+neither.
 
-Let the `owner` field on each finding do the work rather than guessing at
-who is asking. Say who can act — "this one is for your cluster owner" or
-"this is in your SQL" — and let the reader place themselves. That is accurate
-whether they own the cluster or only query it.
+Their team owns the cluster, so the person who can change it is a colleague,
+not a distant operations group. Say "your cluster owner" — never "your
+platform team", which sounds like a separate organisation to escalate to and
+sends them looking outside their own team. It also matches the `owner` field
+on the findings, so the words and the data agree.
+
+When a finding is owned by `cluster_owner`, do not hand them steps they have
+no way to carry out. Say plainly that it needs the cluster owner, and give
+them the specific ask — the setting, the value found, the value wanted — so
+the request lands as something a colleague can act on in a minute rather than
+as "Starburst is slow".
 
 They are at work and want to get on with it. Lead with the answer.
 
@@ -128,41 +136,17 @@ apologise at length or offer a speculative answer as a consolation.
 
 ---
 
-## Optional: injecting the caller's role
+## Later: if cluster owners start using this too
 
-**Not needed to start.** Core infers the audience from the question, which is
-good enough while you are finding out how people actually use this.
+**Not needed now.** Core assumes the reader does not own the cluster, which is
+true of the current audience and is the safer assumption either way: telling
+an owner to raise something with themselves reads as odd, but telling a
+non-owner to go and change a cluster setting sends them at a wall.
 
-Reach for this when you see the failure it fixes: the agent explaining what a
-resource group is to someone who runs them, or telling the cluster's owner to
-go and ask someone about it. If that is not happening, injecting a role adds
-plumbing for no gain.
-
-If you do want it, replace the "Who you are talking to" section of Core with
-one of the blocks below, chosen from whatever you already know about the
-caller — SSO groups, a workspace setting, the channel they asked in.
-
-The reason it is worth doing eventually: `owner` names who can act, and what
-that *means to the reader* is opposite for the two groups. To someone who only
-queries the cluster, `owner: cluster_owner` means "you cannot fix this, here
-is the ask to take to your colleague". To the cluster owner, the same finding
-means "this is yours" — and telling them to escalate to themselves reads as
-the agent not understanding the situation.
-
-### Cluster users who do not own it
-
-```text
-They query this cluster but do not own it. They can change their own SQL; they
-cannot change cluster configuration.
-
-When a finding is owned by `cluster_owner`, do not hand them instructions
-they have no way to carry out. Tell them it needs the cluster owner — someone
-on their own team — and give them the specific ask: the property, the observed
-value, the cluster. That turns "Starburst is slow" into a request a
-colleague can act on in a minute.
-```
-
-### Cluster owners
+If owners do become a significant audience, the change is small. Replace the
+"Assume they use the cluster but do not own it" paragraph with a role injected
+from whatever your graph already knows — SSO groups, a workspace setting — and
+for owners say:
 
 ```text
 They own this cluster as well as querying it. Do not explain what a split, a
@@ -178,7 +162,10 @@ they need to pass on: which query, which user, and the specific change. Say
 plainly that the cluster is not at fault, so they can stop looking there.
 ```
 
----
+The reason it eventually matters: `owner` names who can act, and what that
+*means* is opposite for the two groups. To a user, `owner: cluster_owner`
+means "you cannot fix this, here is the ask to take to your colleague". To the
+owner, the same finding means "this is yours".
 
 ## Use case 1 — Config auditing
 
@@ -316,9 +303,9 @@ behaviour you are seeing.
 If it **buries the answer**, strengthen the lead-with-the-outcome instruction
 and give one example of a good opening sentence.
 
-If it **over-explains to experienced users**, that is the signal to stop
-inferring and start injecting the role — see "Optional: injecting the
-caller's role" above.
+If it **over-explains to experienced users**, or tells someone to raise
+something with themselves, the audience assumption has stopped holding — see
+"Later: if cluster owners start using this too" above.
 
 If it **drops caveats**, that is the highest-severity failure mode here — it
 turns a hedged finding into an assertion. Move the caveat instruction earlier

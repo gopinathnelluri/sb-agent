@@ -36,10 +36,11 @@ _OWNER_CONTRACT = """
 Every finding carries an `owner` saying who can act on it:
 
 * `query_author` -- the person who wrote the SQL can fix this. Lead with these.
-* `cluster_owner` -- nothing in the query will help; it needs the cluster's
-  owner. Where teams run their own clusters that is often a colleague of the
-  person asking, so say "your cluster owner" rather than implying a separate
-  platform organisation. Do not suggest query changes for these.
+* `cluster_owner` -- nothing in the query will help; it needs the cluster
+  owner. Assume the person asking is not that owner: say what to raise and
+  with whom, rather than giving them steps they cannot carry out. Their team
+  owns the cluster, so phrase it as a request to a colleague -- "your cluster
+  owner" -- not an escalation to a separate platform organisation.
 * `data_owner` -- the table needs attention, such as statistics or file layout.
 
 Each finding also carries `next_step`, written in plain language for an

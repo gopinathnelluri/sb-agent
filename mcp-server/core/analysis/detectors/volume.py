@@ -70,7 +70,7 @@ class SpillDetector:
                     "rows earlier, select only the columns you need, or aggregate "
                     "before joining rather than after. If the query genuinely "
                     "needs this much memory, the limit is a cluster setting, so "
-                    "please raise it with your cluster administrator."
+                    "please raise it with your cluster owner."
                 ),
                 actual=_bytes(spilled),
                 expected="no spill",

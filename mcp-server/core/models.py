@@ -111,9 +111,8 @@ class Owner(StrEnum):
 
     Severity says how bad; this says whose problem it is. Someone reading two
     high-severity findings needs to know which one they can fix in their SQL
-    and which one needs whoever administers the cluster -- without it, the
-    only safe reading is "everything is my fault", which is wrong and wastes
-    their time.
+    and which one needs the cluster's owner -- without it, the only safe
+    reading is "everything is my fault", which is wrong and wastes their time.
 
     ``CLUSTER_OWNER`` names a role, not an org chart. Where teams run their
     own clusters that person is usually a colleague, sometimes the reader

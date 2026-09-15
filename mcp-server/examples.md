@@ -131,9 +131,9 @@ found: true   findings: 1   coverage.complete: False
 This query waited 14.1min before it started running. The work itself took only
 55.0s, so almost all of the 15.0min you waited was queueing, not the query.
 -> There is nothing to fix in your SQL. If this keeps happening, it is worth
-raising with your cluster administrator: the cluster may need more capacity
-for this workload, or your queries may be running under a resource group that
-limits how many can run at once.
+raising with your cluster owner: the cluster may need more capacity for this
+workload, or your queries may be running under a resource group that limits
+how many can run at once.
 
 coverage.blind_spots:
   - QRY-SPILL-001 skipped: source did not provide spilled_bytes
@@ -148,7 +148,7 @@ coverage.blind_spots:
 > No -- and this one isn't yours. The query spent 14.1 of 15 minutes
 > waiting in the queue; actual execution was 55 seconds. Nothing in your
 > SQL will change that. If it keeps happening, worth raising with
-> whoever owns this cluster -- it may be under-provisioned for the
+> your cluster owner -- it may be under-provisioned for the
 > workload.
 
 This is why findings carry `owner`. A large share of "slow query"

@@ -84,10 +84,10 @@ class QueueDominatedDetector:
                 owner=Owner.CLUSTER_OWNER,
                 next_step=(
                     "There is nothing to fix in your SQL. If this keeps "
-                    "happening, it is worth raising with your cluster "
-                    "administrator: the cluster may need more capacity for this "
-                    "workload, or your queries may be running under a resource "
-                    "group that limits how many can run at once."
+                    "happening, it is worth raising with your cluster owner: the "
+                    "cluster may need more capacity for this workload, or your "
+                    "queries may be running under a resource group that limits "
+                    "how many can run at once."
                 ),
                 actual=f"{fraction:.0%} queued",
                 expected=f"< {thresholds.queued_fraction:.0%} queued",

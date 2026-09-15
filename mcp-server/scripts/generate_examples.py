@@ -576,7 +576,7 @@ def render() -> str:
         "> No -- and this one isn't yours. The query spent 14.1 of 15 minutes",
         "> waiting in the queue; actual execution was 55 seconds. Nothing in your",
         "> SQL will change that. If it keeps happening, worth raising with",
-        "> whoever owns this cluster -- it may be under-provisioned for the",
+        "> your cluster owner -- it may be under-provisioned for the",
         "> workload.",
         "",
         'This is why findings carry `owner`. A large share of "slow query"',

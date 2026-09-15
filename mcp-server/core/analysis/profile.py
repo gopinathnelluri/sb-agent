@@ -23,6 +23,7 @@ from typing import Any
 import yaml
 
 from core.analysis.models import QueryInfo, QueryState
+from core.analysis.operators import parse_operator_summaries
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 
@@ -167,6 +168,15 @@ class AuditProfile:
         if message is None:
             message = as_str("error_message")
 
+        # The operator payload is a column like any other, but it is parsed
+        # rather than cast. A shape we do not recognise yields no operators,
+        # which the engine reports as skipped detectors.
+        operators = (
+            parse_operator_summaries(_as_text(row.get(self.payload_column)))
+            if self.payload_column
+            else []
+        )
+
         return QueryInfo(
             query_id=str(value("query_id") or ""),
             cluster=cluster,
@@ -197,6 +207,7 @@ class AuditProfile:
             error_message=message,
             started_at=as_str("started_at"),
             ended_at=as_str("ended_at"),
+            operators=operators,
         )
 
     @staticmethod
@@ -240,6 +251,13 @@ class AuditProfile:
             return QueryState(raw.strip().lower())
         except ValueError:
             return QueryState.UNKNOWN
+
+
+def _as_text(value: Any) -> str | None:
+    """Payload columns arrive as text; anything else is not a payload."""
+    if value is None:
+        return None
+    return value if isinstance(value, str) else str(value)
 
 
 def _expand(value: Any) -> Any:

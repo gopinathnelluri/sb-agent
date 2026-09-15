@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 import textwrap
 from pathlib import Path
@@ -20,6 +21,7 @@ from typing import Any
 
 from adapters.local_backup import LocalBackupRepository
 from core.analysis.models import QueryInfo, QueryState
+from core.analysis.operators import parse_operator_summaries
 from core.analysis.service import QueryAnalysisService
 from core.service import ConfigValidationService
 from mcp_server.server import build_server
@@ -43,6 +45,36 @@ WHERE o.order_date >= DATE '2026-01-01'
   AND o.order_date < DATE '2027-01-01'
   AND c.segment = 'enterprise'
 GROUP BY c.region"""
+
+# A payload in the shape Trino documents. Written from the spec rather than
+# captured from this fleet, which is why the parser is deliberately tolerant.
+OPERATOR_PAYLOAD = json.dumps(
+    [
+        {
+            "operatorType": "ScanFilterAndProjectOperator",
+            "stageId": 4,
+            "operatorId": 0,
+            "physicalInputPositions": 1_800_000_000,
+            "physicalInputDataSize": "3.9TB",
+            "outputPositions": 2_400_000,
+        },
+        {
+            "operatorType": "BroadcastExchangeOperator",
+            "stageId": 3,
+            "operatorId": 1,
+            "outputDataSize": "6.2GB",
+        },
+        {
+            "operatorType": "HashJoinOperator",
+            "stageId": 3,
+            "operatorId": 2,
+            "inputPositions": 2_400_000,
+            "outputPositions": 410_000_000,
+            "addInputWall": "17.20m",
+            "spilledDataSize": "48GB",
+        },
+    ]
+)
 
 QUERIES: dict[str, QueryInfo] = {
     "20260910_093412_00042_x7k2m": QueryInfo(
@@ -109,6 +141,26 @@ QUERIES: dict[str, QueryInfo] = {
         queued_ms=7_000,
         total_bytes_scanned=9_200_000_000,
         output_rows=6,
+    ),
+    # The same shape of problem, seen with per-operator detail.
+    "20260912_112233_00901_vv4rr": QueryInfo(
+        query_id="20260912_112233_00901_vv4rr",
+        cluster="prod-analytics",
+        source="audit:sep_event_logger",
+        state=QueryState.FINISHED,
+        sql=(
+            "SELECT c.region, count(*) FROM orders o "
+            "JOIN customers c ON o.region_code = c.region_code "
+            "WHERE o.order_date >= DATE '2026-09-01' GROUP BY c.region"
+        ),
+        user="a.patel",
+        session_catalog="hive",
+        session_schema="sales",
+        elapsed_ms=1_310_000,
+        queued_ms=9_000,
+        total_bytes_scanned=4_200_000_000_000,
+        output_rows=12,
+        operators=parse_operator_summaries(OPERATOR_PAYLOAD),
     ),
     # Failed before finishing -- its numbers describe a partial run.
     "20260911_141203_00518_kk9ww": QueryInfo(
@@ -804,6 +856,41 @@ def render() -> str:
         "Note what is checked beyond the timing: `output_rows` is unchanged, so",
         "the rewrite really did preserve the result. A faster query that returns",
         "different rows is not an improvement.",
+        "",
+        "---",
+        "",
+    ]
+
+    q_ops = "20260912_112233_00901_vv4rr"
+    sections.append(
+        _scenario(
+            "Which step was actually slow",
+            f"`{q_ops}` took 22 minutes. The WHERE clause looks fine to me.",
+            f'analyze_query(cluster="prod-analytics", query_id="{q_ops}")',
+            _call("analyze_query", {"cluster": "prod-analytics", "query_id": q_ops}),
+        )
+    )
+    sections += [
+        "**What the agent might say:**",
+        "",
+        "> The filter is fine -- the problem is the join. It takes in 2.4 million",
+        "> rows and produces 410 million, which means `region_code` is not unique",
+        "> on one side, so each row is matching many others. That is where the 17",
+        "> minutes went, and it is also why 48GB spilled to disk.",
+        ">",
+        "> Two things worth checking: whether `region_code` alone is really the",
+        "> key you meant to join on, and whether `customers` has duplicate rows",
+        "> per region. Counting them is a quick way to confirm.",
+        "",
+        "Compare this with the earlier scenarios. Those said a query read too",
+        "much and took too long -- true, and about the whole query. This one",
+        "names the step, the row counts going in and out, and the stage it sits",
+        "in. That is the difference per-operator statistics make: a symptom",
+        "becomes a location.",
+        "",
+        "It is also why the findings say `stage 3` rather than just `query`.",
+        "Evidence that points somewhere specific is evidence someone can go and",
+        "check.",
         "",
         "---",
         "",

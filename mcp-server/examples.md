@@ -102,10 +102,14 @@ doing.
 
 coverage.blind_spots:
   - QRY-SPILL-001 skipped: source did not provide spilled_bytes
+  - QRY-JOIN-001 skipped: source did not provide operators
+  - QRY-BCAST-001 skipped: source did not provide operators
+  - QRY-SPILL-002 skipped: source did not provide operators
+  - QRY-SCAN-002 skipped: source did not provide operators
   - no per-operator statistics available from this source, so skew, join
     explosion, broadcast sizing and dynamic-filter effectiveness could not be
     assessed
-  - 1 check(s) skipped: required input values were not available
+  - 5 check(s) skipped: required input values were not available
 ```
 
 **What the agent might say:**
@@ -158,10 +162,14 @@ what to do: There is nothing to fix in your SQL. If this keeps happening, it
 
 coverage.blind_spots:
   - QRY-SPILL-001 skipped: source did not provide spilled_bytes
+  - QRY-JOIN-001 skipped: source did not provide operators
+  - QRY-BCAST-001 skipped: source did not provide operators
+  - QRY-SPILL-002 skipped: source did not provide operators
+  - QRY-SCAN-002 skipped: source did not provide operators
   - no per-operator statistics available from this source, so skew, join
     explosion, broadcast sizing and dynamic-filter effectiveness could not be
     assessed
-  - 1 check(s) skipped: required input values were not available
+  - 5 check(s) skipped: required input values were not available
 ```
 
 **What the agent might say:**
@@ -305,6 +313,122 @@ different rows is not an improvement.
 
 ---
 
+### Which step was actually slow
+
+**The analyst asks:**
+
+> `20260912_112233_00901_vv4rr` took 22 minutes. The WHERE clause looks fine to me.
+
+**The agent calls:**
+
+```python
+analyze_query(cluster="prod-analytics", query_id="20260912_112233_00901_vv4rr")
+```
+
+**The tool returns:**
+
+```
+found: true   findings: 5   coverage.complete: False
+
+[HIGH]  domain: data_access  owner: query_author
+This query read 3.8TB of data to produce 12 rows. That is far more than a
+result of this size should need.
+
+why: Large tables are usually split into partitions -- typically by date -- so
+     a query that filters on the partition column can skip the parts it does
+     not need. Reading this much for so small a result suggests it could not
+     skip anything and read the whole table instead.
+
+what to do: Check the WHERE clause. Either there is no filter on the column
+     the table is partitioned by, or the filter wraps that column in a
+     function, which stops Starburst using it. Comparing the column directly
+     to a date range -- event_date >= DATE '2026-01-01' rather than
+     year(event_date) = 2026 -- lets it skip the partitions it does not need.
+
+[HIGH]  domain: query_shape  owner: query_author
+A join is multiplying rows: it took in 2,400,000 rows and produced
+410,000,000, which is 171 times as many.
+
+why: A join matches each row on one side against every row on the other that
+     shares its key. When the key is not unique -- or the condition is missing
+     or too loose -- one row can match thousands, and the result grows far
+     beyond either input. That growth is usually where a query's time and
+     memory go.
+
+what to do: Check the join condition and the keys behind it. Either the
+     condition is missing part of what makes a row unique, or one side has
+     duplicate keys you did not expect -- worth counting them before changing
+     the query.
+
+[HIGH]  domain: memory  owner: query_author
+A broadcast join is sending 6.2GB to every worker, which is more than
+broadcasting is meant for.
+
+why: Broadcasting copies one side of a join to every worker so each can join
+     its own slice without moving data around. That is fast when the copied
+     side is small. When it is not, every worker holds the whole thing at
+     once, which uses memory across the cluster and can push the query into
+     spilling.
+
+what to do: The optimizer expected this side to be smaller than it is, which
+     usually means the table's statistics are out of date. Ask your cluster
+     owner to run ANALYZE on it. If the table really is large, a partitioned
+     join is the better strategy.
+
+[MEDIUM]  domain: data_access  owner: query_author
+A scan read 1,800,000,000 rows and kept only 2,400,000 of them --
+1,797,600,000 rows were read and thrown away.
+
+why: Rows discarded after reading still cost the time to read them. When a
+     filter removes almost everything, it is usually one the storage layer
+     could have applied first, either by skipping partitions or by using the
+     file's own min/max information.
+
+what to do: Check whether the filter is on a column the table is partitioned
+     or sorted by, and whether it is written in a form Starburst can push down
+     -- a direct comparison rather than one wrapped in a function.
+
+[MEDIUM]  domain: memory  owner: query_author
+The step that ran out of memory is the HashJoinOperator in stage 3, which
+wrote 48GB to disk.
+
+why: Knowing which step spilled narrows the fix considerably. A join spilling
+     points at the join's inputs; an aggregation spilling points at how many
+     distinct groups it is holding; a sort spilling points at how much is
+     being ordered.
+
+what to do: Look at what feeds this step. Reducing the rows or columns
+     reaching it is usually more effective than raising the memory limit, and
+     it is something you can do yourself.
+
+coverage.blind_spots:
+  - QRY-SPILL-001 skipped: source did not provide spilled_bytes
+  - 1 check(s) skipped: required input values were not available
+```
+
+**What the agent might say:**
+
+> The filter is fine -- the problem is the join. It takes in 2.4 million
+> rows and produces 410 million, which means `region_code` is not unique
+> on one side, so each row is matching many others. That is where the 17
+> minutes went, and it is also why 48GB spilled to disk.
+>
+> Two things worth checking: whether `region_code` alone is really the
+> key you meant to join on, and whether `customers` has duplicate rows
+> per region. Counting them is a quick way to confirm.
+
+Compare this with the earlier scenarios. Those said a query read too
+much and took too long -- true, and about the whole query. This one
+names the step, the row counts going in and out, and the stage it sits
+in. That is the difference per-operator statistics make: a symptom
+becomes a location.
+
+It is also why the findings say `stage 3` rather than just `query`.
+Evidence that points somewhere specific is evidence someone can go and
+check.
+
+---
+
 ### A query that failed
 
 **The analyst asks:**
@@ -336,10 +460,14 @@ what to do: Fix the cause of the failure and run the query again. It is worth
 
 coverage.blind_spots:
   - QRY-SPILL-001 skipped: source did not provide spilled_bytes
+  - QRY-JOIN-001 skipped: source did not provide operators
+  - QRY-BCAST-001 skipped: source did not provide operators
+  - QRY-SPILL-002 skipped: source did not provide operators
+  - QRY-SCAN-002 skipped: source did not provide operators
   - no per-operator statistics available from this source, so skew, join
     explosion, broadcast sizing and dynamic-filter effectiveness could not be
     assessed
-  - 1 check(s) skipped: required input values were not available
+  - 5 check(s) skipped: required input values were not available
 ```
 
 **What the agent might say:**
@@ -401,9 +529,14 @@ what to do: Try to reduce how much data the query holds at once: filter rows
      limit is a cluster setting, so please raise it with your cluster owner.
 
 coverage.blind_spots:
+  - QRY-JOIN-001 skipped: source did not provide operators
+  - QRY-BCAST-001 skipped: source did not provide operators
+  - QRY-SPILL-002 skipped: source did not provide operators
+  - QRY-SCAN-002 skipped: source did not provide operators
   - no per-operator statistics available from this source, so skew, join
     explosion, broadcast sizing and dynamic-filter effectiveness could not be
     assessed
+  - 4 check(s) skipped: required input values were not available
 ```
 
 **What the agent might say:**
@@ -454,10 +587,14 @@ what to do: Check the WHERE clause. Either there is no filter on the column
 
 coverage.blind_spots:
   - QRY-SPILL-001 skipped: source did not provide spilled_bytes
+  - QRY-JOIN-001 skipped: source did not provide operators
+  - QRY-BCAST-001 skipped: source did not provide operators
+  - QRY-SPILL-002 skipped: source did not provide operators
+  - QRY-SCAN-002 skipped: source did not provide operators
   - no per-operator statistics available from this source, so skew, join
     explosion, broadcast sizing and dynamic-filter effectiveness could not be
     assessed
-  - 1 check(s) skipped: required input values were not available
+  - 5 check(s) skipped: required input values were not available
   - the audit record did not include the SQL text, so the query itself could
     not be examined
 ```
@@ -495,10 +632,14 @@ found: true   findings: 0   coverage.complete: False
 
 coverage.blind_spots:
   - QRY-SPILL-001 skipped: source did not provide spilled_bytes
+  - QRY-JOIN-001 skipped: source did not provide operators
+  - QRY-BCAST-001 skipped: source did not provide operators
+  - QRY-SPILL-002 skipped: source did not provide operators
+  - QRY-SCAN-002 skipped: source did not provide operators
   - no per-operator statistics available from this source, so skew, join
     explosion, broadcast sizing and dynamic-filter effectiveness could not be
     assessed
-  - 1 check(s) skipped: required input values were not available
+  - 5 check(s) skipped: required input values were not available
 ```
 
 **What the agent might say:**

@@ -12,6 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from core.analysis.detectors.base import Detector, Thresholds
+from core.analysis.detectors.operators import (
+    BroadcastSizeDetector,
+    ExplodingJoinDetector,
+    OperatorSpillDetector,
+    ScanSelectivityDetector,
+)
 from core.analysis.detectors.timing import QueryFailedDetector, QueueDominatedDetector
 from core.analysis.detectors.volume import ScanAmplificationDetector, SpillDetector
 from core.analysis.models import QueryInfo
@@ -22,6 +28,12 @@ DEFAULT_DETECTORS: tuple[Detector, ...] = (
     QueueDominatedDetector(),
     SpillDetector(),
     ScanAmplificationDetector(),
+    # Operator-level. Skipped, and reported as skipped, on a source with no
+    # operator_summaries payload.
+    ExplodingJoinDetector(),
+    BroadcastSizeDetector(),
+    OperatorSpillDetector(),
+    ScanSelectivityDetector(),
 )
 
 

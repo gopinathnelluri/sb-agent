@@ -30,6 +30,13 @@ class Thresholds:
     min_output_rows_for_amplification: int = 1
     cpu_to_elapsed_ratio_low: float = 0.1
 
+    # Operator-level limits. Starting points, not fleet truth -- these in
+    # particular want tuning once there are real payloads to calibrate against.
+    join_row_multiplier: float = 10.0
+    broadcast_bytes: int = 1_000_000_000
+    scan_selectivity: float = 0.01
+    min_rows_for_selectivity: int = 1_000_000
+
     @classmethod
     def from_mapping(cls, raw: dict[str, object] | None) -> Thresholds:
         """Build from config, ignoring nothing silently."""

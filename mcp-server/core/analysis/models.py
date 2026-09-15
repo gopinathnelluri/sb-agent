@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from core.analysis.operators import OperatorSummary
+
 
 class QueryState(StrEnum):
     """Terminal state of a query, normalised across sources."""
@@ -37,19 +39,6 @@ class StageStats:
     tasks: int | None = None
     wall_time_ms_max: int | None = None
     wall_time_ms_p50: int | None = None
-    input_rows: int | None = None
-    output_rows: int | None = None
-    input_bytes: int | None = None
-    spilled_bytes: int | None = None
-
-
-@dataclass(frozen=True)
-class OperatorStats:
-    """Per-operator statistics. Only present when the source carries them."""
-
-    stage_id: str
-    operator_id: str
-    operator_type: str
     input_rows: int | None = None
     output_rows: int | None = None
     input_bytes: int | None = None
@@ -123,7 +112,7 @@ class QueryInfo:
 
     # Present only when the source carries a full statistics payload.
     stages: list[StageStats] = field(default_factory=list)
-    operators: list[OperatorStats] = field(default_factory=list)
+    operators: list[OperatorSummary] = field(default_factory=list)
     tables: list[TableRef] = field(default_factory=list)
 
     started_at: str | None = None

@@ -116,6 +116,24 @@ def register_query_tools(server: MCPServer, service: QueryAnalysisService) -> No
         If `found` is false, the query is not in the history. Read
         `not_found_reason` -- it usually means the record aged out, not that
         the id was wrong.
+
+        ## Use `history` -- it is the most persuasive part of the answer
+
+        When the same SQL has run before, `history` compares this run against
+        the most recent earlier one, and you get it without a second call.
+        Include it. A finding on its own invites "is that a lot?", and the
+        answer is a judgement against a threshold. Next to the query's own
+        past it stops being a judgement: "it read 4TB today and 210GB last
+        month" is a measurement, and it is what makes the rest believable.
+
+        `history.same_sql` matters most. When it is true the user changed
+        nothing, so whatever moved came from outside their query -- the data
+        grew, the cluster got busier, statistics went stale. Say that plainly.
+        Leaving it out lets someone conclude they broke their own query when
+        they did not.
+
+        `history` is null when this is the first time the query has run, which
+        is normal for ad-hoc work and not worth remarking on.
         """
         return service.analyze_query(cluster, query_id)
 

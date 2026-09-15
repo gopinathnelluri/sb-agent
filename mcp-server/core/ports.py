@@ -139,6 +139,19 @@ class QueryRepository(Protocol):
         """
         ...
 
+    def previous_runs(
+        self, cluster: str, query: QueryInfo, limit: int = 5
+    ) -> list[QueryInfo]:
+        """Earlier executions of the same SQL, most recent first.
+
+        Returns an empty list when none are found, which is the common case
+        for an ad-hoc query and is not an error. Matching is the adapter's
+        business: recurring work -- dashboards, scheduled jobs -- sends
+        byte-identical SQL, which is exactly the case where a baseline is
+        worth having.
+        """
+        ...
+
     def retention_days(self) -> int | None:
         """How far back the history goes, when the source can report it."""
         ...

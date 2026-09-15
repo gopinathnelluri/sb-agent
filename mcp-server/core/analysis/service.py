@@ -41,6 +41,8 @@ class QueryAnalysis:
     coverage: Coverage | None = None
     detectors_run: list[str] = field(default_factory=list)
     not_found_reason: str | None = None
+    history: QueryComparison | None = None
+    previous_run_count: int = 0
 
 
 class QueryAnalysisService:
@@ -99,11 +101,14 @@ class QueryAnalysisService:
                 "no query-text analysis was possible"
             )
 
+        findings = sort_findings(roots + runtime.findings)
+        history, previous_count = self._history(cluster, query, findings)
+
         return QueryAnalysis(
             query_id=query_id,
             cluster=cluster,
             found=True,
-            findings=sort_findings(roots + runtime.findings),
+            findings=findings,
             sql_patterns=list(static.patterns) if static else [],
             rewrites=list(static.rewrites) if static else [],
             suggested_sql=rewritten_sql(query.sql) if query.sql else None,
@@ -114,6 +119,39 @@ class QueryAnalysisService:
                 rules_skipped_missing_input=len(runtime.detectors_skipped),
                 blind_spots=blind_spots,
             ),
+            history=history,
+            previous_run_count=previous_count,
+        )
+
+    def _history(
+        self, cluster: str, query: QueryInfo, findings: list[Finding]
+    ) -> tuple[QueryComparison | None, int]:
+        """Compare this run against the last time the same SQL ran.
+
+        Context is what turns a threshold into a measurement. "This read 4TB"
+        invites the question "is that a lot?", and the answer is a judgement.
+        "This read 4TB; last month the same query read 210GB" is not a
+        judgement at all -- and it tells the user nothing is wrong with what
+        they wrote, which is usually what they want to know first.
+
+        Always best-effort. A query with no earlier runs is the normal case
+        for ad-hoc work, and a lookup that fails must not cost the user their
+        analysis.
+        """
+        try:
+            earlier = self._repository.previous_runs(cluster, query, limit=5)
+        except Exception:  # noqa: BLE001 - context is a bonus, not a dependency
+            return None, 0
+        if not earlier:
+            return None, 0
+
+        baseline = earlier[0]
+        baseline_findings = run_detectors(
+            baseline, thresholds=self._thresholds
+        ).findings
+        return (
+            compare(baseline, query, baseline_findings, findings),
+            len(earlier),
         )
 
     def compare_queries(

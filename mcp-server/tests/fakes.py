@@ -257,5 +257,20 @@ class FakeQueryRepository:
             name=table, partition_columns=self.partitions.get(table, frozenset())
         )
 
+    def previous_runs(
+        self, cluster: str, query: QueryInfo, limit: int = 5
+    ) -> list[QueryInfo]:
+        if not query.sql:
+            return []
+        earlier = [
+            q
+            for q in self.queries.values()
+            if q.query_id != query.query_id
+            and q.cluster == cluster
+            and q.sql == query.sql
+        ]
+        earlier.sort(key=lambda q: q.ended_at or q.query_id, reverse=True)
+        return earlier[:limit]
+
     def retention_days(self) -> int | None:
         return self.retention

@@ -41,7 +41,7 @@ def _query(query_id: str, sql: str | None, **kwargs: object) -> QueryInfo:
     return QueryInfo(**base)  # type: ignore[arg-type]
 
 
-def _service(*queries: QueryInfo) -> QueryAnalysisService:
+def _service_with(*queries: QueryInfo) -> QueryAnalysisService:
     return QueryAnalysisService(
         FakeQueryRepository(
             queries={q.query_id: q for q in queries},
@@ -151,7 +151,7 @@ class TestRewriteLoop:
         after = _query(
             "after", FAST_SQL, elapsed_ms=41_000, total_bytes_scanned=9_200_000_000
         )
-        return _service(before, after).compare_queries("prod", "before", "after")
+        return _service_with(before, after).compare_queries("prod", "before", "after")
 
     def test_verdict_states_the_improvement(self) -> None:
         result = self._comparison()
@@ -169,14 +169,14 @@ class TestRewriteLoop:
 
 class TestServiceLevel:
     def test_unknown_query_explains_which_one_is_missing(self) -> None:
-        service = _service(_query("known", SLOW_SQL, elapsed_ms=1_000))
+        service = _service_with(_query("known", SLOW_SQL, elapsed_ms=1_000))
         result = service.compare_queries("prod", "known", "missing")
         assert result.found is False
         assert result.not_found_reason is not None
         assert "'missing'" in result.not_found_reason
 
     def test_both_missing_names_both(self) -> None:
-        result = _service().compare_queries("prod", "one", "two")
+        result = _service_with().compare_queries("prod", "one", "two")
         assert result.not_found_reason is not None
         assert "'one'" in result.not_found_reason
         assert "'two'" in result.not_found_reason
@@ -190,10 +190,86 @@ class TestServiceLevel:
             total_bytes_scanned=4_000_000_000_000,
         )
         after = _query("after", FAST_SQL, elapsed_ms=30_000, total_bytes_scanned=1_000)
-        service = _service(before, after)
+        service = _service_with(before, after)
         alone = {f.rule_id for f in service.analyze_query("prod", "before").findings}
         comparison = service.compare_queries("prod", "before", "after")
         together = {f.rule_id for f in comparison.findings_only_in_a} | {
             f.rule_id for f in comparison.findings_in_both
         }
         assert alone == together
+
+
+class TestAutomaticHistory:
+    """Context arrives with the analysis, not on a second call.
+
+    A finding on its own invites "is that a lot?". The same finding beside
+    the query's own past is a measurement rather than a judgement, and it is
+    what tells a user nothing is wrong with what they wrote.
+    """
+
+    def _service(self) -> QueryAnalysisService:
+        earlier = _query(
+            "earlier",
+            SLOW_SQL,
+            elapsed_ms=94_000,
+            total_bytes_scanned=210_000_000_000,
+            ended_at="2026-08-12T09:01:35Z",
+        )
+        today = _query(
+            "today",
+            SLOW_SQL,
+            elapsed_ms=1_284_000,
+            total_bytes_scanned=4_400_000_000_000,
+            ended_at="2026-09-15T09:55:36Z",
+        )
+        return _service_with(earlier, today)
+
+    def test_analysis_includes_the_previous_run(self) -> None:
+        result = self._service().analyze_query("prod", "today")
+        assert result.history is not None
+        assert result.previous_run_count == 1
+
+    def test_history_says_the_sql_did_not_change(self) -> None:
+        """Which is what tells the user they did not break it."""
+        result = self._service().analyze_query("prod", "today")
+        assert result.history is not None
+        assert result.history.same_sql is True
+
+    def test_history_quantifies_the_regression(self) -> None:
+        result = self._service().analyze_query("prod", "today")
+        assert result.history is not None
+        assert "slower" in result.history.verdict
+
+    def test_no_history_for_a_first_run(self) -> None:
+        """Normal for ad-hoc work, and not an error."""
+        only = _query("only", SLOW_SQL, elapsed_ms=1_000)
+        result = _service_with(only).analyze_query("prod", "only")
+        assert result.history is None
+        assert result.previous_run_count == 0
+
+    def test_a_different_query_is_not_a_baseline(self) -> None:
+        """A baseline drawn from other SQL is worse than none."""
+        other = _query("other", FAST_SQL, elapsed_ms=1_000)
+        mine = _query("mine", SLOW_SQL, elapsed_ms=900_000)
+        result = _service_with(other, mine).analyze_query("prod", "mine")
+        assert result.history is None
+
+    def test_history_failure_does_not_cost_the_analysis(self) -> None:
+        """Context is a bonus; losing it must not lose the findings."""
+
+        class Broken(FakeQueryRepository):
+            def previous_runs(self, cluster, query, limit=5):  # type: ignore[no-untyped-def]
+                raise RuntimeError("history lookup failed")
+
+        query = _query(
+            "q", SLOW_SQL, elapsed_ms=900_000, total_bytes_scanned=4_000_000_000_000
+        )
+        service = QueryAnalysisService(
+            Broken(
+                queries={"q": query},
+                partitions={"orders": frozenset({"order_date"})},
+            )
+        )
+        result = service.analyze_query("prod", "q")
+        assert result.findings
+        assert result.history is None

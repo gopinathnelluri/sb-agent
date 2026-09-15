@@ -201,6 +201,47 @@ class TrinoAuditRepository:
 
         return TableFacts(name=table, partition_columns=partition_columns)
 
+    def previous_runs(
+        self, cluster: str, query: QueryInfo, limit: int = 5
+    ) -> list[QueryInfo]:
+        """Earlier executions of the same SQL text.
+
+        Matched on the exact statement rather than anything fuzzier. A
+        dashboard or scheduled job sends byte-identical SQL every time, and
+        those are precisely the queries where "it used to be fast" gets asked.
+        An ad-hoc query typed slightly differently will not match, which is
+        the right outcome -- a baseline drawn from a different query would be
+        worse than no baseline at all.
+        """
+        sql_column = self.profile.columns.get("sql")
+        ended_column = self.profile.columns.get("ended_at")
+        if not sql_column or not query.sql:
+            return []
+
+        columns = ", ".join(f'"{c}"' for c in self.profile.select_list())
+        where = [f'"{sql_column}" = ?', f'"{self.profile.columns["query_id"]}" <> ?']
+        params: list[Any] = [query.sql, query.query_id]
+        if self.profile.cluster_column and cluster:
+            where.append(f'"{self.profile.cluster_column}" = ?')
+            params.append(cluster)
+
+        order = f'ORDER BY "{ended_column}" DESC' if ended_column else ""
+        sql = (
+            f"SELECT {columns} FROM {self.profile.table.qualified} "
+            f"WHERE {' AND '.join(where)} {order} LIMIT {max(1, min(limit, 20))}"
+        )
+        try:
+            rows = self._rows(sql, tuple(params))
+        except Exception:  # noqa: BLE001 - history is a bonus, never a blocker
+            log.debug("Could not look up previous runs", exc_info=True)
+            return []
+        return [
+            self.profile.to_query_info(
+                row, cluster=cluster, source=f"audit:{self.profile.name}"
+            )
+            for row in rows
+        ]
+
     def retention_days(self) -> int | None:
         """How far back the audit table goes, when a timestamp is mapped."""
         column = self.profile.columns.get("ended_at")

@@ -100,6 +100,13 @@ suggested_sql:
 interpreted in the session time zone -- confirm that matches what year() was
 doing.
 
+history:  previous runs found: 1   same SQL: True
+  The same query was 13.7x slower -- 1.6min then, 21.4min now.
+  - [worsened] total time went from 1.6min to 21.4min -- 13.7x more
+  - [worsened] time spent queueing went from 6.0s to 8.0s -- 1.3x more
+  - [worsened] data scanned went from 195.6GB to 4TB -- 21.0x more
+  - [unchanged] rows returned barely changed (6)
+
 coverage.blind_spots:
   - QRY-SPILL-001 skipped: source did not provide spilled_bytes
   - QRY-JOIN-001 skipped: source did not provide operators
@@ -120,8 +127,20 @@ coverage.blind_spots:
 > partitions -- it reads all of them and filters afterwards. The rewrite
 > below returns the same rows. One caveat: if `order_date` is TIMESTAMP
 > WITH TIME ZONE, the boundaries use your session timezone.
+>
+> Worth saying: you did not break anything. The same query took 1.6
+> minutes a month ago and read 196GB. The SQL has not changed -- the
+> table has simply grown past the point where reading all of it is
+> survivable, which is why the partition filter now matters.
 
-Note why this is stated firmly rather than hedged: the runtime signal
+The `history` block is the part that makes this land. On its own,
+"4TB scanned" invites the question "is that a lot?" -- and the answer
+is a judgement against a threshold. Next to the same query's own past
+it is a measurement, and it tells the user that nothing they wrote is
+at fault: the SQL is identical, the data grew. It arrives with the
+analysis, so there is nothing extra to call.
+
+Note why the finding is stated firmly rather than hedged: the runtime signal
 (huge scan, tiny result) and the text signal (partition column wrapped in
 a function) agree. Without partition metadata to confirm `order_date` is
 a partition column, the same pattern would be reported as `suspected` and

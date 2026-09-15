@@ -86,6 +86,7 @@ QUERIES: dict[str, QueryInfo] = {
         user="a.patel",
         session_catalog="hive",
         session_schema="sales",
+        ended_at="2026-09-10T09:55:36Z",
         elapsed_ms=1_284_000,
         queued_ms=8_000,
         cpu_ms=3_900_000,
@@ -122,6 +123,7 @@ QUERIES: dict[str, QueryInfo] = {
         user="a.patel",
         session_catalog="hive",
         session_schema="sales",
+        ended_at="2026-08-12T09:01:35Z",
         elapsed_ms=94_000,
         queued_ms=6_000,
         total_bytes_scanned=210_000_000_000,
@@ -318,6 +320,23 @@ def _scenario(
                 out.append(f"  equivalence: {rewrite['equivalence']}")
                 if rewrite.get("caveat"):
                     out.append(_wrap("  caveat: " + rewrite["caveat"]))
+        history = payload.get("history")
+        if history:
+            out += [
+                "",
+                f"history:  previous runs found: {payload['previous_run_count']}"
+                f"   same SQL: {history['same_sql']}",
+                _wrap(history["verdict"], "  ", "  "),
+            ]
+            for change in history["changes"]:
+                if change["summary"]:
+                    out.append(
+                        _wrap(
+                            f"- [{change['direction']}] {change['summary']}",
+                            "  ",
+                            "      ",
+                        )
+                    )
         if coverage["blind_spots"]:
             out += ["", "coverage.blind_spots:"]
             out += [
@@ -737,8 +756,20 @@ def render() -> str:
         "> partitions -- it reads all of them and filters afterwards. The rewrite",
         "> below returns the same rows. One caveat: if `order_date` is TIMESTAMP",
         "> WITH TIME ZONE, the boundaries use your session timezone.",
+        ">",
+        "> Worth saying: you did not break anything. The same query took 1.6",
+        "> minutes a month ago and read 196GB. The SQL has not changed -- the",
+        "> table has simply grown past the point where reading all of it is",
+        "> survivable, which is why the partition filter now matters.",
         "",
-        "Note why this is stated firmly rather than hedged: the runtime signal",
+        "The `history` block is the part that makes this land. On its own,",
+        '"4TB scanned" invites the question "is that a lot?" -- and the answer',
+        "is a judgement against a threshold. Next to the same query's own past",
+        "it is a measurement, and it tells the user that nothing they wrote is",
+        "at fault: the SQL is identical, the data grew. It arrives with the",
+        "analysis, so there is nothing extra to call.",
+        "",
+        "Note why the finding is stated firmly rather than hedged: the runtime signal",
         "(huge scan, tiny result) and the text signal (partition column wrapped in",
         "a function) agree. Without partition metadata to confirm `order_date` is",
         "a partition column, the same pattern would be reported as `suspected` and",

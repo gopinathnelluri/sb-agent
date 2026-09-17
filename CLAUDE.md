@@ -24,6 +24,7 @@ precomputed at build time and shipped in the image.
     mcp-server/       this MCP server; contains no LLM (see below)
     SPEC.md           design for the MCP server
     architecture.md   mermaid diagrams of both use cases
+    diagrams/         the same diagrams as .mmd files (generated)
     system-prompt.md  starting-point prompts for the agent that calls it
     tasks.md          backlog: what is not built, and what it waits on
     CLAUDE.md         this file

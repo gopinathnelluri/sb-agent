@@ -1,0 +1,30 @@
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant P as PUMA
+    participant A as BI Agent
+    participant R as R2D2 gateway
+    participant S as SB MCP Tools
+    participant D as COS / Audit catalog
+
+    U->>P: "why was query X slow?"<br/>or "is my cluster set up right?"
+    P->>A: forward
+    A->>R: which tool fits this?
+    R-->>A: call the analyzer
+
+    A->>S: identify cluster
+    S-->>A: prod-analytics
+
+    rect rgb(238, 247, 238)
+        note over A,D: deterministic - no model inside this band
+        A->>S: analyze_query(cluster, query_id)<br/>or run_rules(cluster, scopes)
+        S->>D: read-only fetch
+        D-->>S: query stats / config files
+        note right of S: evaluate rules, run detectors,<br/>attach evidence to every finding
+        S-->>A: findings + coverage<br/>(empty list = nothing found)
+    end
+
+    A->>R: write this up, findings attached
+    R-->>A: plain-English answer
+    A->>P: answer, with file+line or query id
+    P->>U: shown in chat

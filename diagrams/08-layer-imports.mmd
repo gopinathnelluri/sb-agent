@@ -1,0 +1,16 @@
+flowchart TD
+    m["<b>mcp_server/</b><br/>thin MCP wrapper<br/><i>no business logic</i>"]
+    a["<b>adapters/</b><br/>COS · Trino · local backup<br/><i>network lives here</i>"]
+    c["<b>core/</b><br/>rules · analysis · parsers<br/><i>pure, offline, fully unit-tested</i>"]
+    p["<b>core/ports.py</b><br/>Protocols<br/><i>ConfigRepository · QueryRepository</i>"]
+
+    m -->|"depends on"| c
+    m -->|"wires up"| a
+    a -.->|"implements"| p
+    p --- c
+
+    x["agent framework<br/>LLM client<br/>MCP library"]
+    c -.->|"<b>never</b>"| x
+
+    classDef forbidden fill:#fff0f0,stroke:#c44,stroke-width:2px
+    class x forbidden

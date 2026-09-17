@@ -1,0 +1,48 @@
+flowchart LR
+    user(["User"])
+
+    subgraph puma["PUMA"]
+        chat["HelpBot"]
+    end
+
+    agent["<b>BI Agent</b><br/><i>decides which tools to call,<br/>writes the answer</i>"]
+
+    subgraph r2d2["R2D2 gateway"]
+        model["Model"]
+    end
+
+    subgraph mcps["MCP servers"]
+        direction TB
+        sb["<b>SB MCP Tools</b><br/><i>no LLM</i><br/>· Cluster identification and health check<br/>· Access validation<br/>· <b>Config Auditor</b><br/>· <b>Query Plan Analyzer</b>"]
+        adm["sb-ad-mcp<br/><i>AD group membership</i>"]
+        rag["RAG / docs"]
+    end
+
+    mw[("Cluster details API<br/><i>env · sector · url ·<br/>authorised AD group</i>")]
+
+    subgraph fleet["Starburst fleet"]
+        direction TB
+        target["<b>Target cluster</b><br/><i>the one identified</i>"]
+        audit[("audit db catalog<br/><i>completed queries</i>")]
+        others["other clusters<br/><i>100s</i>"]
+        target --- audit
+    end
+
+    cos[("IBM COS<br/><i>config backups, nightly</i>")]
+
+    user --> chat
+    chat --> agent
+    agent -->|"prompt / completion"| r2d2
+    agent -->|"tool call / findings<br/><i>MCP</i>"| sb
+    agent -->|"context<br/><i>MCP</i>"| rag
+    agent -.->|"group members"| adm
+    sb -.->|"cluster url, authorised group"| mw
+    sb -.->|"health check, access probe"| target
+    sb -->|"reads config backups<br/><i>S3 API, read-only</i>"| cos
+    sb -->|"reads query history<br/><i>trino python client, read-only</i>"| audit
+    fleet -.->|"backed up nightly"| cos
+
+    classDef mine fill:#eef7ee,stroke:#4a7,stroke-width:2px
+    classDef dim fill:#fafafa,stroke:#bbb,color:#888
+    class sb mine
+    class others,adm,mw dim

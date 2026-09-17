@@ -1,0 +1,48 @@
+flowchart TB
+    subgraph tools2["MCP tools"]
+        direction LR
+        q1["analyze_query"]
+        q2["compare_queries"]
+        q3["get_query_info"]
+    end
+
+    svc2["QueryAnalysisService<br/><i>core/analysis/service.py</i>"]
+    repo2["QueryRepository (port)<br/><i>Trino audit catalog</i>"]
+    prof[("Column profile<br/><i>YAML: audit schema → our field names</i>")]
+    qi["QueryInfo<br/><i>timings · volumes · state<br/>· SQL text · operator stats</i>"]
+
+    subgraph sig1["Signal A — what the runtime measured"]
+        direction TB
+        dt["Detectors"]
+        dtime["timing<br/><i>queueing dominates</i>"]
+        dvol["volume<br/><i>scan amplification, spill</i>"]
+        dop["operators<br/><i>join explosion, broadcast,<br/>skew, selectivity</i>"]
+        dt --> dtime & dvol & dop
+    end
+
+    subgraph sig2["Signal B — what the SQL says"]
+        direction TB
+        sp["sqlglot parse"]
+        pat["Patterns<br/><i>function on partition column,<br/>cross join, SELECT *</i>"]
+        rw["AST rewrite<br/><i>marked equivalent or suggested</i>"]
+        sp --> pat --> rw
+    end
+
+    corr{{"Correlate<br/><i>both signals agree?</i>"}}
+    root["is_root_cause = true<br/><i>state it firmly</i>"]
+    susp["suspected<br/><i>raise it as a question</i>"]
+
+    hist["History — automatic<br/><i>same SQL, previous run</i>"]
+    out2(["QueryAnalysis<br/>findings · suggested_sql<br/>history · coverage"])
+
+    tools2 --> svc2 --> repo2
+    prof -.->|"maps columns"| repo2
+    repo2 --> qi
+    qi --> sig1
+    qi -->|"SQL text"| sig2
+    sig1 --> corr
+    sig2 --> corr
+    corr -->|"yes"| root
+    corr -->|"one signal only"| susp
+    svc2 -.->|"best-effort,<br/>never blocks"| hist
+    root & susp & hist --> out2

@@ -1,0 +1,50 @@
+flowchart TB
+    subgraph tools["MCP tools — thin wrappers, no logic"]
+        direction LR
+        t1["list_clusters"]
+        t2["describe_backup_layout"]
+        t3["get_config_summary"]
+        t4["run_rules"]
+        t5["get_config_detail"]
+        t6["diff_clusters"]
+    end
+
+    svc["ConfigValidationService<br/><i>core/service.py</i>"]
+
+    subgraph load["Build a snapshot"]
+        direction TB
+        repo["ConfigRepository (port)<br/><i>COS · local backup</i>"]
+        parse["Parsers<br/>.properties · jvm.config · *-site.xml<br/>+ .json sibling cross-check"]
+        meta["Metadata<br/><i>owner, group, mode<br/>from *.metadata.json</i>"]
+        redact["Redaction guard<br/><i>refuse to surface a secret</i>"]
+        snap["ClusterSnapshot<br/><i>every node, every file, with line numbers</i>"]
+        repo --> parse --> snap
+        repo --> meta --> snap
+        parse --> redact --> snap
+    end
+
+    subgraph eval["Evaluate — deterministic, no context reachable"]
+        direction TB
+        cat[("Rule catalog<br/><i>YAML, one file per domain</i>")]
+        gate["Version gate<br/><i>true / false / unknown</i>"]
+        prop["Property checks<br/>max · min · range · equals<br/>one_of · matches · ratio"]
+        cons["Consistency checks<br/><i>same value on every node?</i>"]
+        filec["File checks<br/><i>world-readable? mode?</i>"]
+        cat --> gate --> prop & cons & filec
+    end
+
+    findings["Findings<br/><i>Scope · Severity · Owner<br/>actual vs expected<br/>evidence: file + line</i>"]
+    cov["Coverage<br/><i>what could not be checked, and why</i>"]
+    enrich["Enrichment pass<br/><i>context applied here and only here</i>"]
+    out(["ConfigSummary / RuleResult"])
+
+    tools --> svc --> load
+    snap --> eval
+    eval --> findings
+    eval --> cov
+    findings --> enrich --> out
+    cov --> out
+    ctx[/"context<br/>(optional, from parent)"/] -.->|"may annotate<br/><b>never decides</b>"| enrich
+
+    classDef danger fill:#fff0f0,stroke:#c44,stroke-dasharray:4 3
+    class ctx danger

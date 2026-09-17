@@ -1,0 +1,30 @@
+flowchart TB
+    user(["Application-team user<br/><i>queries the cluster, does not own it</i>"])
+
+    subgraph agent["PUMA / BI Agent — the model side"]
+        direction LR
+        llm["BI Agent + R2D2<br/><i>decides which tools to call,<br/>writes the prose</i>"]
+        rag["RAG / doc index<br/><i>optional context</i>"]
+    end
+
+    subgraph mcp["SB MCP Tools — no LLM"]
+        direction LR
+        uc1["Use case 1<br/><b>Config Auditor</b><br/>6 tools"]
+        uc2["Use case 2<br/><b>Query Plan Analyzer</b><br/>3 tools"]
+    end
+
+    cos[("IBM COS<br/>config backups<br/><i>redacted, daily</i>")]
+    audit[("Master Starburst cluster<br/>audit catalog<br/><i>completed queries</i>")]
+
+    user -->|"question in English"| llm
+    llm -->|"answer with evidence"| user
+    rag -.->|"context: non-decisional"| llm
+    llm <-->|"MCP: tool call / structured findings"| uc1
+    llm <-->|"MCP: tool call / structured findings"| uc2
+    uc1 -->|"read-only, S3 API"| cos
+    uc2 -->|"read-only SQL, LDAP auth as AD FID"| audit
+
+    classDef nollm fill:#eef7ee,stroke:#4a7,stroke-width:2px
+    classDef hasllm fill:#fff4e6,stroke:#e90,stroke-width:2px
+    class mcp,uc1,uc2 nollm
+    class agent,llm,rag hasllm

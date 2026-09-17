@@ -1,0 +1,18 @@
+flowchart LR
+    subgraph shared["Shared shape — core/models.py"]
+        f["Finding<br/>severity · owner · evidence<br/>summary · rationale · next_step"]
+    end
+
+    subgraph c1["Config finding"]
+        s["domain: <b>Scope</b><br/><i>memory · jvm · node_identity<br/>file_security · catalog …</i>"]
+        e1["evidence: ConfigEvidence<br/><i>role · node · file · line</i>"]
+    end
+
+    subgraph c2["Query finding"]
+        d["domain: <b>QueryDomain</b><br/><i>scheduling · data_access<br/>memory · join · …</i>"]
+        e2["evidence: QueryEvidence<br/><i>stage · operator · metric</i>"]
+    end
+
+    f --> c1
+    f --> c2
+    c1 x--x|"cannot mix"| c2

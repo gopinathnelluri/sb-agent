@@ -1,0 +1,17 @@
+flowchart TB
+    subgraph ocp["OpenShift"]
+        direction TB
+        pod["Pod — random UID<br/>ubi9/python-311<br/>HOME=/tmp"]
+        sec[/"Secrets<br/><i>mounted files or env</i><br/>COS keys · TRINO_PASSWORD_FILE"/]
+        sec -->|"read at startup,<br/>never logged"| pod
+    end
+
+    parent["BI Agent"] <-->|"MCP"| pod
+    pod -->|"HTTPS"| cos[("IBM COS")]
+    pod -->|"TLS + LDAP as AD FID"| sb[("Master Starburst<br/>audit catalog")]
+
+    note["All 9 tools are read-only.<br/>Anything that would load or mutate<br/>a cluster splits into plan_* / run_*<br/>so the parent can gate it."]
+    pod -.- note
+
+    classDef n fill:#f8f8f8,stroke:#999,stroke-dasharray:3 3
+    class note n

@@ -250,7 +250,11 @@ class FakeQueryRepository:
         return query
 
     def table_facts(
-        self, table: str, catalog: str | None = None, schema: str | None = None
+        self,
+        cluster: str,
+        table: str,
+        catalog: str | None = None,
+        schema: str | None = None,
     ) -> TableFacts:
         self.facts_requested.append(table)
         return TableFacts(
@@ -272,5 +276,5 @@ class FakeQueryRepository:
         earlier.sort(key=lambda q: q.ended_at or q.query_id, reverse=True)
         return earlier[:limit]
 
-    def retention_days(self) -> int | None:
+    def retention_days(self, cluster: str) -> int | None:
         return self.retention

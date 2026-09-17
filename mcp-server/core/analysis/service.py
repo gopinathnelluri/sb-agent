@@ -60,7 +60,7 @@ class QueryAnalysisService:
         """Analyse one completed query."""
         query = self._repository.get_query(cluster, query_id)
         if query is None:
-            retention = self._repository.retention_days()
+            retention = self._repository.retention_days(cluster)
             window = (
                 f" History covers roughly the last {retention} days."
                 if retention
@@ -81,7 +81,7 @@ class QueryAnalysisService:
         runtime = run_detectors(query, thresholds=self._thresholds)
 
         # Step 2: the query text, when the source recorded it.
-        facts = self._table_facts(query)
+        facts = self._table_facts(cluster, query)
         static = analyze_sql(query.sql, facts) if query.sql else None
 
         # Step 3: root causes, only where both signals agree.
@@ -170,7 +170,7 @@ class QueryAnalysisService:
             if self._repository.get_query(cluster, qid) is None
         ]
         if missing:
-            retention = self._repository.retention_days()
+            retention = self._repository.retention_days(cluster)
             window = (
                 f" History covers roughly the last {retention} days."
                 if retention
@@ -194,7 +194,7 @@ class QueryAnalysisService:
         assert second.query is not None
         return compare(first.query, second.query, first.findings, second.findings)
 
-    def _table_facts(self, query: QueryInfo) -> dict[str, TableFacts]:
+    def _table_facts(self, cluster: str, query: QueryInfo) -> dict[str, TableFacts]:
         """Look up partition columns for the tables the query touched.
 
         Facts are what turn a suspected pattern into a confirmed one. A lookup
@@ -209,6 +209,6 @@ class QueryAnalysisService:
         facts: dict[str, TableFacts] = {}
         for name in names:
             facts[name] = self._repository.table_facts(
-                name, query.session_catalog, query.session_schema
+                cluster, name, query.session_catalog, query.session_schema
             )
         return facts

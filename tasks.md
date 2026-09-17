@@ -139,6 +139,27 @@ someone asks why the agent said something last Tuesday.
 
 ## Landed
 
+### Per-cluster audit connections — done 2026-09-16
+
+The adapter assumed one master cluster federating the fleet's audit catalogs,
+with the cluster name as a `WHERE` filter. It is one catalog per cluster, so
+the name selects a connection instead. `table_facts` and `retention_days` now
+take a cluster for the same reason — both were fleet-wide questions that are
+really per-cluster ones.
+
+`cluster_column` is now unset in the shipped profile, with a comment saying
+why. The candidate it used to name, `environment`, holds `node.environment`
+("production"), not a cluster name: left in place it would have matched no
+rows and reported every query as aged out of retention. That failure would
+have looked exactly like a normal empty history, which is the kind of bug that
+survives a long time.
+
+Endpoints come from `TRINO_CLUSTER_ENDPOINTS` (JSON) or a mounted file, so the
+mapping can be a ConfigMap. Still open: sourcing it from the cluster details
+API instead, which already holds each cluster's url beside its environment,
+sector and authorised AD group. That removes a mapping someone has to keep in
+step with the fleet, and is worth doing before the list grows.
+
 ### Automatic historical context in `analyze_query` — done 2026-09-15
 
 `analyze_query` now returns `history` alongside the findings: the same SQL's

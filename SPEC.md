@@ -258,11 +258,26 @@ returning full per-stage and per-operator statistics. Supplement with:
 `query.max-history` / `query.min-expire-age`, so the live REST endpoint is not
 a usable primary source — users report slow queries hours later.
 
-**Resolved:** the primary source is a master cluster federating each cluster's
-audit catalog, read over SQL. That is also the most upgrade-resilient option
-available, because the schema is ours: `/v1/query/{queryId}` is documented as
-internal and changes between releases with no deprecation cycle. Column names
-live in `core/analysis/profiles/*.yaml` so a schema change is a YAML edit.
+**Resolved:** the primary source is each cluster's own audit catalog, read
+over SQL by connecting to that cluster. A cluster name therefore selects a
+connection rather than filtering rows, and the profile ships with
+`cluster_column` unset — one audit table holds one cluster's queries.
+
+*(Corrected 2026-09-16. This previously read "a master cluster federating each
+cluster's audit catalog", which put the cluster name in a `WHERE` clause. The
+tempting column for that filter, `environment`, holds `node.environment`
+rather than a cluster name, so the filter would have matched nothing and
+reported every query as expired.)*
+
+Endpoints come from a cluster-to-host mapping — `TRINO_CLUSTER_ENDPOINTS` as
+JSON, or a mounted file so it can be a ConfigMap. Connections are opened
+lazily, one per cluster, and reused. A single `TRINO_HOST` still serves every
+cluster, which is what a one-cluster deployment wants.
+
+Reading the audit catalog is also the most upgrade-resilient option available,
+because the schema is ours: `/v1/query/{queryId}` is documented as internal
+and changes between releases with no deprecation cycle. Column names live in
+`core/analysis/profiles/*.yaml` so a schema change is a YAML edit.
 
 **Still open:** whether the audit table carries a full per-operator statistics
 payload. If it does, all nine detectors are buildable. If it carries only

@@ -1,9 +1,19 @@
 """Completed-query history read from a Starburst audit catalog.
 
-Connects to the master cluster over HTTPS with an AD functional ID (LDAP
-basic auth) and reads the federated audit table. Which columns that table
-uses is not hardcoded here -- it comes from an ``AuditProfile``, so a schema
-change or a differently-configured cluster is a YAML edit.
+Every cluster keeps its own audit catalog, so a cluster name selects a
+connection rather than filtering rows. Connections are opened lazily, one per
+cluster, and reused: a conversation about one cluster costs one connection,
+and asking about a second does not disturb the first.
+
+Endpoints come from a mapping -- ``TRINO_CLUSTER_ENDPOINTS`` as JSON, or a
+mounted file -- keyed by the same cluster names the rest of the tools use. A
+single ``TRINO_HOST`` still works and is then used for every cluster, which is
+what a one-cluster deployment or a test wants.
+
+Each connection authenticates over HTTPS with an AD functional ID (LDAP basic
+auth). Which columns the audit table uses is not hardcoded here -- it comes
+from an ``AuditProfile``, so a schema change or a differently-configured
+cluster is a YAML edit.
 
 Credentials are read from environment variables or from files mounted by the
 platform, never from anything in this repository, and never logged. Under
@@ -16,6 +26,7 @@ import from a test process.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -29,6 +40,8 @@ log = logging.getLogger(__name__)
 
 HOST_ENV = "TRINO_HOST"
 PORT_ENV = "TRINO_PORT"
+ENDPOINTS_ENV = "TRINO_CLUSTER_ENDPOINTS"
+ENDPOINTS_FILE_ENV = "TRINO_CLUSTER_ENDPOINTS_FILE"
 USER_ENV = "TRINO_USER"
 PASSWORD_ENV = "TRINO_PASSWORD"
 PASSWORD_FILE_ENV = "TRINO_PASSWORD_FILE"
@@ -67,6 +80,36 @@ def read_password() -> str:
     return password
 
 
+def read_endpoints() -> dict[str, str]:
+    """Cluster name -> host, or "host:port", from the environment.
+
+    A mounted file is read first so the mapping can be managed as a ConfigMap
+    and changed without redeploying. Unreadable or malformed content yields an
+    empty mapping rather than an exception: the single-host fallback may still
+    be configured, and failing at construction would take down every tool
+    including the ones that never touch a cluster.
+    """
+    raw = ""
+    path = os.environ.get(ENDPOINTS_FILE_ENV)
+    if path:
+        try:
+            raw = Path(path).read_text(encoding="utf-8")
+        except OSError:
+            log.warning("Could not read the endpoint mapping at %s", path)
+    raw = raw or os.environ.get(ENDPOINTS_ENV, "")
+    if not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        log.warning("Endpoint mapping is not valid JSON; ignoring it.")
+        return {}
+    if not isinstance(parsed, dict):
+        log.warning("Endpoint mapping must be an object of cluster -> host.")
+        return {}
+    return {str(k): str(v) for k, v in parsed.items()}
+
+
 class TrinoAuditRepository:
     """Reads query history from an audit catalog on a Starburst cluster."""
 
@@ -74,6 +117,7 @@ class TrinoAuditRepository:
         self,
         profile: AuditProfile,
         *,
+        endpoints: dict[str, str] | None = None,
         host: str | None = None,
         port: int | None = None,
         user: str | None = None,
@@ -81,27 +125,55 @@ class TrinoAuditRepository:
         connection: Any = None,
     ) -> None:
         self.profile = profile
+        self._endpoints = endpoints if endpoints is not None else read_endpoints()
         self._host = host or os.environ.get(HOST_ENV, "")
         self._port = port or int(os.environ.get(PORT_ENV, DEFAULT_PORT))
         self._user = user or os.environ.get(USER_ENV, "")
-        self._connection = connection
         self._password = password
+        # One connection per cluster. `connection=` injects a single stand-in
+        # for every cluster, which is what tests want.
+        self._injected = connection
+        self._connections: dict[str, Any] = {}
 
-        if connection is None and not self._host:
+        if connection is None and not (self._endpoints or self._host):
             raise TrinoConnectionError(
-                f"No cluster configured. Pass host= or set {HOST_ENV}."
+                f"No clusters configured. Set {ENDPOINTS_ENV} to a JSON object "
+                f"of cluster name to host, or {HOST_ENV} for a single cluster."
             )
         if connection is None and not self._user:
             raise TrinoConnectionError(
                 f"No functional ID configured. Pass user= or set {USER_ENV}."
             )
 
+    def _endpoint(self, cluster: str) -> tuple[str, int]:
+        """Resolve a cluster name to a host and port.
+
+        Falls back to the single configured host when no mapping is given, so
+        a one-cluster deployment needs no mapping at all. An unknown name with
+        no fallback is an error that names what is configured -- the likely
+        cause is a cluster that exists in the backup inventory but has no
+        audit endpoint yet, and that is worth saying rather than timing out.
+        """
+        target = self._endpoints.get(cluster) or self._host
+        if not target:
+            known = ", ".join(sorted(self._endpoints)) or "none"
+            raise TrinoConnectionError(
+                f"No audit endpoint configured for cluster {cluster!r}. "
+                f"Configured clusters: {known}."
+            )
+        host, _, port = target.partition(":")
+        return host, int(port) if port.isdigit() else self._port
+
     # -- connection ------------------------------------------------------
 
-    def _connect(self) -> Any:
-        """Open a connection, or reuse the one injected for tests."""
-        if self._connection is not None:
-            return self._connection
+    def _connect(self, cluster: str) -> Any:
+        """Open a connection to one cluster, or reuse an open one."""
+        if self._injected is not None:
+            return self._injected
+        existing = self._connections.get(cluster)
+        if existing is not None:
+            return existing
+        host, port = self._endpoint(cluster)
         try:
             import trino
         except ImportError as exc:  # pragma: no cover - deployment dependency
@@ -111,9 +183,9 @@ class TrinoAuditRepository:
 
         password = self._password or read_password()
         # http_scheme is https because LDAP basic auth must never go in clear.
-        self._connection = trino.dbapi.connect(  # type: ignore[no-untyped-call]
-            host=self._host,
-            port=self._port,
+        connection = trino.dbapi.connect(  # type: ignore[no-untyped-call]
+            host=host,
+            port=port,
             user=self._user,
             http_scheme="https",
             auth=trino.auth.BasicAuthentication(self._user, password),
@@ -121,17 +193,21 @@ class TrinoAuditRepository:
             schema=self.profile.table.schema,
         )
         log.info(
-            "Connected to %s:%s as %s (audit table %s)",
-            self._host,
-            self._port,
+            "Connected to %s (%s:%s) as %s (audit table %s)",
+            cluster,
+            host,
+            port,
             self._user,
             self.profile.table.qualified,
         )
-        return self._connection
+        self._connections[cluster] = connection
+        return connection
 
-    def _rows(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
-        """Run a query and return rows as dicts keyed by column name."""
-        cursor = self._connect().cursor()
+    def _rows(
+        self, cluster: str, sql: str, params: tuple[Any, ...] = ()
+    ) -> list[dict[str, Any]]:
+        """Run a query on one cluster and return rows keyed by column name."""
+        cursor = self._connect(cluster).cursor()
         try:
             cursor.execute(sql, params) if params else cursor.execute(sql)
             columns = [d[0] for d in (cursor.description or [])]
@@ -162,7 +238,7 @@ class TrinoAuditRepository:
             f"SELECT {columns} FROM {self.profile.table.qualified} "
             f"WHERE {' AND '.join(where)} LIMIT 1"
         )
-        rows = self._rows(sql, tuple(params))
+        rows = self._rows(cluster, sql, tuple(params))
         if not rows:
             return None
         return self.profile.to_query_info(
@@ -170,7 +246,11 @@ class TrinoAuditRepository:
         )
 
     def table_facts(
-        self, table: str, catalog: str | None = None, schema: str | None = None
+        self,
+        cluster: str,
+        table: str,
+        catalog: str | None = None,
+        schema: str | None = None,
     ) -> TableFacts:
         """Discover a table's partition columns.
 
@@ -189,7 +269,7 @@ class TrinoAuditRepository:
 
         target = f'{catalog}.{schema}."{table}$partitions"'
         try:
-            cursor = self._connect().cursor()
+            cursor = self._connect(cluster).cursor()
             try:
                 cursor.execute(f"SELECT * FROM {target} LIMIT 0")
                 partition_columns = frozenset(d[0] for d in (cursor.description or []))
@@ -231,7 +311,7 @@ class TrinoAuditRepository:
             f"WHERE {' AND '.join(where)} {order} LIMIT {max(1, min(limit, 20))}"
         )
         try:
-            rows = self._rows(sql, tuple(params))
+            rows = self._rows(cluster, sql, tuple(params))
         except Exception:  # noqa: BLE001 - history is a bonus, never a blocker
             log.debug("Could not look up previous runs", exc_info=True)
             return []
@@ -242,8 +322,8 @@ class TrinoAuditRepository:
             for row in rows
         ]
 
-    def retention_days(self) -> int | None:
-        """How far back the audit table goes, when a timestamp is mapped."""
+    def retention_days(self, cluster: str) -> int | None:
+        """How far back this cluster's audit table goes, when it can say."""
         column = self.profile.columns.get("ended_at")
         if not column:
             return None
@@ -252,7 +332,7 @@ class TrinoAuditRepository:
             f"FROM {self.profile.table.qualified}"
         )
         try:
-            rows = self._rows(sql)
+            rows = self._rows(cluster, sql)
         except Exception:  # noqa: BLE001 - a scan this wide may be denied
             log.debug("Could not determine retention window", exc_info=True)
             return None

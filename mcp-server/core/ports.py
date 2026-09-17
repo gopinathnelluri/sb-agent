@@ -130,12 +130,17 @@ class QueryRepository(Protocol):
         ...
 
     def table_facts(
-        self, table: str, catalog: str | None, schema: str | None
+        self, cluster: str, table: str, catalog: str | None, schema: str | None
     ) -> TableFacts:
         """Partition columns and stats availability for one table.
 
         Used to promote a suspected SQL pattern to a confirmed one. Returns
         empty facts rather than raising when the table cannot be inspected.
+
+        Takes a cluster because a table name means nothing without one: the
+        same catalog and schema can resolve to differently partitioned tables
+        on two clusters, and the lookup runs against the cluster that ran the
+        query.
         """
         ...
 
@@ -152,8 +157,12 @@ class QueryRepository(Protocol):
         """
         ...
 
-    def retention_days(self) -> int | None:
-        """How far back the history goes, when the source can report it."""
+    def retention_days(self, cluster: str) -> int | None:
+        """How far back this cluster's history goes, when it can report it.
+
+        Per cluster, not per fleet: retention is a property of the audit
+        catalog being read, and two clusters need not agree.
+        """
         ...
 
 

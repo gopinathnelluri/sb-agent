@@ -28,33 +28,39 @@ flowchart LR
 
     subgraph mcps["MCP servers"]
         direction TB
-        sb["<b>SB MCP Tools</b><br/><i>no LLM</i><br/>· Cluster identification and health check<br/>· Access validation<br/>· Config Auditor<br/>· Query Plan Analyzer"]
+        sb["<b>SB MCP Tools</b><br/><i>no LLM</i><br/>· Cluster identification and health check<br/>· Access validation<br/>· <b>Config Auditor</b><br/>· <b>Query Plan Analyzer</b>"]
+        adm["sb-ad-mcp<br/><i>AD group membership</i>"]
         rag["RAG / docs"]
     end
+
+    mw[("Cluster details API<br/><i>env · sector · url ·<br/>authorised AD group</i>")]
 
     subgraph fleet["Starburst fleet"]
         direction TB
         target["<b>Target cluster</b><br/><i>the one identified</i>"]
+        audit[("audit db catalog<br/><i>completed queries</i>")]
         others["other clusters<br/><i>100s</i>"]
+        target --- audit
     end
 
     cos[("IBM COS<br/><i>config backups, nightly</i>")]
-    audit[("Audit catalog<br/><i>completed queries</i>")]
 
     user --> chat
     chat --> agent
     agent -->|"prompt / completion"| r2d2
     agent -->|"tool call / findings<br/><i>MCP</i>"| sb
     agent -->|"context<br/><i>MCP</i>"| rag
+    agent -.->|"group members"| adm
+    sb -.->|"cluster url, authorised group"| mw
+    sb -.->|"health check, access probe"| target
     sb -->|"reads config backups<br/><i>S3 API, read-only</i>"| cos
     sb -->|"reads query history<br/><i>trino python client, read-only</i>"| audit
     fleet -.->|"backed up nightly"| cos
-    target --- audit
 
     classDef mine fill:#eef7ee,stroke:#4a7,stroke-width:2px
     classDef dim fill:#fafafa,stroke:#bbb,color:#888
     class sb mine
-    class others dim
+    class others,adm,mw dim
 ```
 
 **How to read it:** PUMA is where the user types. The BI Agent behind it
@@ -67,6 +73,14 @@ Arrow labels say what crosses the line and how, not which feature sits at the
 end of it. The feature names are already inside the box; what a reader cannot
 otherwise tell is that one connection is object storage and the other is SQL.
 
+**The greyed pieces are existing work, drawn so the picture is honest rather
+than because they matter here.** The cluster details API holds the fleet
+table — environment, sector, url, authorised AD group — and `sb-ad-mcp`
+resolves that group to its members; together they are how access validation
+works, and the health check reaches its cluster directly. None of it is part
+of the two use cases below. It is on the diagram only because leaving it off
+would suggest the server talks to nothing but a bucket and one catalog.
+
 The agent identifies the cluster first, then passes that name into every
 following call. The tools never pick a cluster themselves — scope is always
 an argument, so there is no `validate_everything()`.
@@ -75,12 +89,10 @@ From there the two use cases diverge, and they share nothing but the server
 they live in. The Config Auditor reads last night's backup from COS. The
 Query Plan Analyzer reads the audit catalog.
 
-> Worth confirming: the diagram shows the audit catalog belonging to the
-> identified cluster. If one master cluster federates the whole fleet's audit
-> catalogs instead, that arrow moves to the master and the cluster name
-> becomes a filter rather than a connection target. The adapter currently
-> assumes the federated version — one connection, cluster as a `WHERE`
-> clause.
+The audit catalog belongs to the cluster being asked about: the Query Plan
+Analyzer connects to *that* cluster and reads its own audit db catalog. There
+is no master cluster federating the fleet, so the cluster name selects a
+connection rather than filtering rows.
 
 ---
 

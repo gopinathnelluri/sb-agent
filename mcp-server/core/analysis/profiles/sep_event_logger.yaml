@@ -20,8 +20,14 @@ table:
   schema: "${AUDIT_SCHEMA}"
   name: completed_queries
 
-# One table holds many clusters; this column says which.
-cluster_column: environment
+# Deliberately unset. Every cluster keeps its own audit catalog, so the
+# connection already selects the cluster and a filter would only narrow it
+# further. `environment` is the tempting candidate and is wrong: it holds
+# node.environment ("production"), not the cluster name the tools use, so
+# filtering on it would match nothing and report every query as not found.
+# Set this only for a source that genuinely federates several clusters into
+# one table.
+# cluster_column: <column>
 
 columns:
   query_id: query_id

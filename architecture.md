@@ -14,20 +14,22 @@ calls the same thing a container diagram.)
 
 ```mermaid
 flowchart LR
-    user(["User<br/><i>app-team analyst</i>"])
+    user(["User"])
 
-    subgraph you["Your side"]
-        direction TB
-        agent["<b>SB Agent</b><br/><i>LangGraph - owns the LLM</i>"]
-        llm["Model API"]
-        agent --- llm
+    subgraph puma["PUMA"]
+        chat["Chat interface"]
+    end
+
+    agent["<b>BI Agent</b><br/><i>decides which tools to call,<br/>writes the answer</i>"]
+
+    subgraph r2d2["R2D2 gateway"]
+        model["Model"]
     end
 
     subgraph mcps["MCP servers"]
         direction TB
-        ident["Cluster identification<br/><i>existing</i>"]
-        rag["RAG / docs<br/><i>existing</i>"]
-        sb["<b>SB MCP Tools</b><br/><i>this repo - no LLM</i>"]
+        sb["<b>SB MCP Tools</b><br/><i>this repo - no LLM</i><br/>· Cluster identification<br/>· Config Auditor<br/>· Query Plan Analyzer"]
+        rag["RAG / docs"]
     end
 
     subgraph fleet["Starburst fleet"]
@@ -36,16 +38,16 @@ flowchart LR
         others["other clusters<br/><i>100s</i>"]
     end
 
-    cos[("IBM COS<br/><i>config backups</i><br/><i>redacted, daily</i>")]
+    cos[("IBM COS<br/><i>config backups, nightly</i>")]
     audit[("Audit catalog<br/><i>completed queries</i>")]
 
-    user --> agent
-    agent --> ident
-    agent --> rag
+    user --> chat
+    chat --> agent
+    agent -->|"prompt / completion"| r2d2
     agent --> sb
-
-    sb -->|"use case 1<br/>read configs"| cos
-    sb -->|"use case 2<br/>read query history"| audit
+    agent --> rag
+    sb -->|"Config Auditor"| cos
+    sb -->|"Query Plan Analyzer"| audit
     fleet -.->|"backed up nightly"| cos
     target --- audit
 
@@ -55,17 +57,26 @@ flowchart LR
     class others dim
 ```
 
-**How to read it:** the agent identifies the cluster first, using the tools
-you already have, then passes that cluster name into every SB MCP call. The
-SB MCP tools never pick a cluster themselves -- scope is always an argument.
-From there the two use cases diverge: configs come from the nightly COS
-backup, query history comes from the audit catalog.
+**How to read it:** PUMA is where the user types. The BI Agent behind it
+reaches the model through the R2D2 gateway, and reaches data through MCP
+servers — never the other way round. Cluster identification is part of the SB
+MCP Tools already, from the earlier use cases, so identifying the cluster and
+auditing it are two calls to the same server rather than a hop between two.
+
+The agent identifies the cluster first, then passes that name into every
+following call. The tools never pick a cluster themselves — scope is always
+an argument, so there is no `validate_everything()`.
+
+From there the two use cases diverge, and they share nothing but the server
+they live in. The Config Auditor reads last night's backup from COS. The
+Query Plan Analyzer reads the audit catalog.
 
 > Worth confirming: the diagram shows the audit catalog belonging to the
-> target cluster. If instead one master cluster federates the audit catalogs
-> of the whole fleet, that arrow moves to the master and the cluster name
-> becomes a filter rather than a connection target. Either works -- tell me
-> which and I will correct it.
+> identified cluster. If one master cluster federates the whole fleet's audit
+> catalogs instead, that arrow moves to the master and the cluster name
+> becomes a filter rather than a connection target. The adapter currently
+> assumes the federated version — one connection, cluster as a `WHERE`
+> clause.
 
 ---
 
@@ -77,14 +88,19 @@ The same two paths, in order. (This one is a *sequence diagram*.)
 sequenceDiagram
     autonumber
     actor U as User
-    participant A as SB Agent
-    participant I as Cluster ID tools
+    participant P as PUMA
+    participant A as BI Agent
+    participant R as R2D2 gateway
     participant S as SB MCP Tools
     participant D as COS / Audit catalog
 
-    U->>A: "why was query X slow?"<br/>or "is my cluster set up right?"
-    A->>I: which cluster?
-    I-->>A: prod-analytics
+    U->>P: "why was query X slow?"<br/>or "is my cluster set up right?"
+    P->>A: forward
+    A->>R: which tool fits this?
+    R-->>A: call the analyzer
+
+    A->>S: identify cluster
+    S-->>A: prod-analytics
 
     rect rgb(238, 247, 238)
         note over A,D: deterministic - no model inside this band
@@ -95,8 +111,10 @@ sequenceDiagram
         S-->>A: findings + coverage<br/>(empty list = nothing found)
     end
 
-    note over A: model writes the prose,<br/>from the findings only
-    A->>U: plain-English answer, with<br/>file+line or query id
+    A->>R: write this up, findings attached
+    R-->>A: plain-English answer
+    A->>P: answer, with file+line or query id
+    P->>U: shown in chat
 ```
 
 The green band is the part that cannot vary: same query id, same findings,
@@ -123,16 +141,16 @@ Where the boundaries are, and which side owns the model.
 flowchart TB
     user(["Application-team user<br/><i>queries the cluster, does not own it</i>"])
 
-    subgraph agent["Parent agent — owns the LLM"]
+    subgraph agent["PUMA / BI Agent — the model side"]
         direction LR
-        llm["Model<br/><i>decides which tools to call,<br/>writes the prose</i>"]
+        llm["BI Agent + R2D2<br/><i>decides which tools to call,<br/>writes the prose</i>"]
         rag["RAG / doc index<br/><i>optional context</i>"]
     end
 
-    subgraph mcp["starburst-agent MCP server — no LLM"]
+    subgraph mcp["SB MCP Tools — no LLM"]
         direction LR
-        uc1["Use case 1<br/><b>Config auditor</b><br/>6 tools"]
-        uc2["Use case 2<br/><b>Query analyzer</b><br/>3 tools"]
+        uc1["Use case 1<br/><b>Config Auditor</b><br/>6 tools"]
+        uc2["Use case 2<br/><b>Query Plan Analyzer</b><br/>3 tools"]
     end
 
     cos[("IBM COS<br/>config backups<br/><i>redacted, daily</i>")]
@@ -154,7 +172,7 @@ flowchart TB
 
 The green boundary contains no model. Same inputs, same outputs, every time.
 Everything that requires judgement — which tool, what to say — is on the
-orange side. That split is the whole design: the agent can be replaced
+orange side. That split is the whole design: the BI Agent can be replaced
 without touching a rule.
 
 ---
@@ -338,7 +356,7 @@ flowchart TB
         sec -->|"read at startup,<br/>never logged"| pod
     end
 
-    parent["Parent agent"] <-->|"MCP"| pod
+    parent["BI Agent"] <-->|"MCP"| pod
     pod -->|"HTTPS"| cos[("IBM COS")]
     pod -->|"TLS + LDAP as AD FID"| sb[("Master Starburst<br/>audit catalog")]
 

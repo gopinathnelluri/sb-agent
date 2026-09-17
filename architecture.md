@@ -47,7 +47,7 @@ flowchart LR
     agent -->|"tool call / findings<br/><i>MCP</i>"| sb
     agent -->|"context<br/><i>MCP</i>"| rag
     sb -->|"reads config backups<br/><i>S3 API, read-only</i>"| cos
-    sb -->|"reads query history<br/><i>SQL over HTTPS, read-only</i>"| audit
+    sb -->|"reads query history<br/><i>trino python client, read-only</i>"| audit
     fleet -.->|"backed up nightly"| cos
     target --- audit
 

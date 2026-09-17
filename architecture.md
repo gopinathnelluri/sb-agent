@@ -1,7 +1,113 @@
 # Architecture
 
-Diagrams for the two use cases this MCP server serves. `SPEC.md` is the
-design document; this file is the picture of it.
+`SPEC.md` is the design document; this file is the picture of it.
+
+Start with the two diagrams below -- the pieces, and the request flow. The
+sections after them are detail, and only worth opening when you need it.
+
+---
+
+## Components
+
+What exists, and what talks to what. (This is a *component diagram* -- C4
+calls the same thing a container diagram.)
+
+```mermaid
+flowchart LR
+    user(["User<br/><i>app-team analyst</i>"])
+
+    subgraph you["Your side"]
+        direction TB
+        agent["<b>SB Agent</b><br/><i>LangGraph - owns the LLM</i>"]
+        llm["Model API"]
+        agent --- llm
+    end
+
+    subgraph mcps["MCP servers"]
+        direction TB
+        ident["Cluster identification<br/><i>existing</i>"]
+        rag["RAG / docs<br/><i>existing</i>"]
+        sb["<b>SB MCP Tools</b><br/><i>this repo - no LLM</i>"]
+    end
+
+    subgraph fleet["Starburst fleet"]
+        direction TB
+        target["<b>Target cluster</b><br/><i>the one identified</i>"]
+        others["other clusters<br/><i>100s</i>"]
+    end
+
+    cos[("IBM COS<br/><i>config backups</i><br/><i>redacted, daily</i>")]
+    audit[("Audit catalog<br/><i>completed queries</i>")]
+
+    user --> agent
+    agent --> ident
+    agent --> rag
+    agent --> sb
+
+    sb -->|"use case 1<br/>read configs"| cos
+    sb -->|"use case 2<br/>read query history"| audit
+    fleet -.->|"backed up nightly"| cos
+    target --- audit
+
+    classDef mine fill:#eef7ee,stroke:#4a7,stroke-width:2px
+    classDef dim fill:#fafafa,stroke:#bbb,color:#888
+    class sb mine
+    class others dim
+```
+
+**How to read it:** the agent identifies the cluster first, using the tools
+you already have, then passes that cluster name into every SB MCP call. The
+SB MCP tools never pick a cluster themselves -- scope is always an argument.
+From there the two use cases diverge: configs come from the nightly COS
+backup, query history comes from the audit catalog.
+
+> Worth confirming: the diagram shows the audit catalog belonging to the
+> target cluster. If instead one master cluster federates the audit catalogs
+> of the whole fleet, that arrow moves to the master and the cluster name
+> becomes a filter rather than a connection target. Either works -- tell me
+> which and I will correct it.
+
+---
+
+## Request flow
+
+The same two paths, in order. (This one is a *sequence diagram*.)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant A as SB Agent
+    participant I as Cluster ID tools
+    participant S as SB MCP Tools
+    participant D as COS / Audit catalog
+
+    U->>A: "why was query X slow?"<br/>or "is my cluster set up right?"
+    A->>I: which cluster?
+    I-->>A: prod-analytics
+
+    rect rgb(238, 247, 238)
+        note over A,D: deterministic - no model inside this band
+        A->>S: analyze_query(cluster, query_id)<br/>or run_rules(cluster, scopes)
+        S->>D: read-only fetch
+        D-->>S: query stats / config files
+        note right of S: evaluate rules, run detectors,<br/>attach evidence to every finding
+        S-->>A: findings + coverage<br/>(empty list = nothing found)
+    end
+
+    note over A: model writes the prose,<br/>from the findings only
+    A->>U: plain-English answer, with<br/>file+line or query id
+```
+
+The green band is the part that cannot vary: same query id, same findings,
+same numbers, every time. The model reads those findings and writes the
+sentences -- it is not allowed to add a problem the tools did not return.
+
+---
+
+# Detail
+
+Everything below is the inside of the green band. Skip it unless you need it.
 
 The dependency rule every diagram obeys: **arrows point inward.** `mcp_server`
 knows about `core`; `core` knows about nothing above it. That is what makes

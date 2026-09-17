@@ -17,7 +17,7 @@ flowchart LR
     user(["User"])
 
     subgraph puma["PUMA"]
-        chat["Chat interface"]
+        chat["HelpBot"]
     end
 
     agent["<b>BI Agent</b><br/><i>decides which tools to call,<br/>writes the answer</i>"]
@@ -28,7 +28,7 @@ flowchart LR
 
     subgraph mcps["MCP servers"]
         direction TB
-        sb["<b>SB MCP Tools</b><br/><i>this repo - no LLM</i><br/>· Cluster identification<br/>· Config Auditor<br/>· Query Plan Analyzer"]
+        sb["<b>SB MCP Tools</b><br/><i>no LLM</i><br/>· Cluster identification and health check<br/>· Access validation<br/>· Config Auditor<br/>· Query Plan Analyzer"]
         rag["RAG / docs"]
     end
 
@@ -44,10 +44,10 @@ flowchart LR
     user --> chat
     chat --> agent
     agent -->|"prompt / completion"| r2d2
-    agent --> sb
-    agent --> rag
-    sb -->|"Config Auditor"| cos
-    sb -->|"Query Plan Analyzer"| audit
+    agent -->|"tool call / findings<br/><i>MCP</i>"| sb
+    agent -->|"context<br/><i>MCP</i>"| rag
+    sb -->|"reads config backups<br/><i>S3 API, read-only</i>"| cos
+    sb -->|"reads query history<br/><i>SQL over HTTPS, read-only</i>"| audit
     fleet -.->|"backed up nightly"| cos
     target --- audit
 
@@ -62,6 +62,10 @@ reaches the model through the R2D2 gateway, and reaches data through MCP
 servers — never the other way round. Cluster identification is part of the SB
 MCP Tools already, from the earlier use cases, so identifying the cluster and
 auditing it are two calls to the same server rather than a hop between two.
+
+Arrow labels say what crosses the line and how, not which feature sits at the
+end of it. The feature names are already inside the box; what a reader cannot
+otherwise tell is that one connection is object storage and the other is SQL.
 
 The agent identifies the cluster first, then passes that name into every
 following call. The tools never pick a cluster themselves — scope is always
